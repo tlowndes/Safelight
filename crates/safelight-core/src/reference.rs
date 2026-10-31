@@ -36,7 +36,16 @@ pub fn ensure_topic(cat: &Catalogue, name: &str) -> Result<i64> {
     Ok(cat.conn.last_insert_rowid())
 }
 
+/// Starter topics for design reference, created the first time topics are listed.
+pub const DEFAULT_TOPICS: &[&str] = &["Typography", "UI", "Colour", "Branding", "Layout", "Packaging", "Illustration", "Photography", "To sort"];
+
 pub fn topics(cat: &Catalogue) -> Result<Vec<Topic>> {
+    if cat.setting("topics_seeded")?.is_none() {
+        for t in DEFAULT_TOPICS {
+            ensure_topic(cat, t)?;
+        }
+        cat.set_setting("topics_seeded", "1")?;
+    }
     Ok(cat
         .conn
         .prepare(

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, ScanProgress, Source } from "../api";
+import { api, n, Progress, Source } from "../api";
+import ProgressBar from "../components/ProgressBar";
 
 const KINDS = [
   { kind: "proton", name: "Proton Drive", hint: "Your Proton Drive sync folder on this PC" },
@@ -9,9 +10,9 @@ const KINDS = [
   { kind: "nas", name: "NAS", hint: "A mapped drive or network share, e.g. \\\\NAS\\photos" },
 ];
 
-type Props = { sources: Source[]; progress: ScanProgress | null; onScan: (id: number) => Promise<void>; onChanged: () => void; onDone: () => void };
+type Props = { sources: Source[]; scanProgress: Progress | null; thumbProgress: Progress | null; onScan: (id: number) => Promise<void>; onChanged: () => void; onDone: () => void };
 
-export default function Sources({ sources, progress, onScan, onChanged, onDone }: Props) {
+export default function Sources({ sources, scanProgress, thumbProgress, onScan, onChanged, onDone }: Props) {
   const [busy, setBusy] = useState(false);
 
   const pick = async (kind: string, name: string) => {
@@ -30,14 +31,13 @@ export default function Sources({ sources, progress, onScan, onChanged, onDone }
     setBusy(false);
   };
 
-  const scanning = progress ? sources.find((s) => s.id === progress.source_id) : undefined;
-  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+  const scanning = scanProgress ? sources.find((s) => s.id === scanProgress.source_id) : undefined;
 
   return (
     <div className="onboard">
       <div className="eyebrow">Sources</div>
       <h1>Where are your photos?</h1>
-      <p className="lead">Safelight only reads from these. Nothing is moved or deleted until you've seen the new library and said yes.</p>
+      <p className="lead">Safelight only reads from these. Nothing is moved or deleted until you've seen the new library and said yes. For Google Photos, download a Takeout export of Google Photos, unzip it, and choose that folder.</p>
       <div className="cards">
         {KINDS.map((k) => {
           const added = sources.filter((s) => s.kind === k.kind);
@@ -48,7 +48,7 @@ export default function Sources({ sources, progress, onScan, onChanged, onDone }
                 {added.length === 0 && <span className="muted">Not added yet</span>}
                 {added.map((s) => (
                   <div key={s.id} className="ok">
-                    ✓ {s.root}<br />{s.item_count.toLocaleString("en-GB")} photos and videos
+                    ✓ {s.root}<br />{n(s.item_count)} photos and videos
                     <button className="link" onClick={async () => { await api.removeSource(s.id); onChanged(); }}>Remove</button>
                   </div>
                 ))}
@@ -60,18 +60,13 @@ export default function Sources({ sources, progress, onScan, onChanged, onDone }
           );
         })}
       </div>
-      {progress && (
-        <div className="progress">
-          <div className="row"><b>Scanning {scanning?.name ?? "source"}</b><span className="muted">{progress.done.toLocaleString("en-GB")} of {progress.total.toLocaleString("en-GB")}</span></div>
-          <div className="bar"><b style={{ width: `${pct}%` }} /></div>
-          <div className="muted small ellipsis">{progress.current}</div>
-        </div>
-      )}
+      {scanProgress && scanProgress.done < scanProgress.total && <ProgressBar label={`Scanning ${scanning?.name ?? "source"}`} p={scanProgress} />}
+      {thumbProgress && thumbProgress.done < thumbProgress.total && <ProgressBar label="Making previews and visual fingerprints" p={thumbProgress} />}
       <div className="foot">
         <span className="muted">Re-scans only read new or changed files, so they're quick.</span>
         <div className="row">
           <button className="btn" disabled={busy || sources.length === 0} onClick={rescanAll}>Re-scan all</button>
-          <button className="btn pri" disabled={sources.length === 0} onClick={onDone}>See the library →</button>
+          <button className="btn pri" disabled={sources.length === 0} onClick={onDone}>Next: duplicates →</button>
         </div>
       </div>
     </div>
