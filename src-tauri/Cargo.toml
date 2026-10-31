@@ -1,0 +1,19 @@
+[package]
+name = "safelight"
+version = "0.1.0"
+description = "Safelight: one tidy photo and video library from all your sources"
+edition = "2021"
+
+[lib]
+name = "safelight_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+safelight-core = { path = "../crates/safelight-core" }
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
