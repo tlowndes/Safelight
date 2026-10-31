@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish the installer as a preview release
+        type: boolean
+        default: true
 
 jobs:
   core-tests:
@@ -16,6 +22,8 @@ jobs:
 
   windows-build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,9 +34,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
       - run: npm run tauri build
+      # The account's Actions storage can fill up, so a failed artefact upload shouldn't fail the build.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
+          retention-days: 3
           name: safelight-windows-installer
           path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+      # Run the workflow by hand to get a downloadable installer on the Releases page.
+      - name: Publish preview release
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-preview.${{ github.run_number }}
+          name: Safelight preview ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: |
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi

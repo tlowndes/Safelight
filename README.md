@@ -22,7 +22,7 @@ npm install
 npm run tauri dev
 ```
 
-Or download the installer from the latest CI run: **Actions → CI → safelight-windows-installer**.
+Or get an installer: **Actions → CI → Run workflow** on your branch, then download it from **Releases** once the run finishes.
 
 ## Layout
 
