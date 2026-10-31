@@ -1,9 +1,9 @@
 //! The local catalogue: a SQLite file in the app's data folder (never inside a synced folder).
 
 use crate::{media::Kind, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 pub struct Catalogue {
     pub(crate) conn: Connection,
@@ -29,6 +29,17 @@ pub struct Item {
     pub sha256: String,
     pub taken_at: Option<String>,
     pub date_source: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub has_camera: bool,
+    /// Cached thumbnail (JPEG) path, once generated.
+    pub thumb: Option<String>,
+    /// None = undecided, "keep", or "drop" (a look-alike the user chose not to keep).
+    pub dup_status: Option<String>,
+    /// None = not decided, true/false once the user (or an accepted suggestion) has said.
+    pub is_reference: Option<bool>,
+    pub topic_id: Option<i64>,
+    pub edited: bool,
     /// True when another file in the catalogue has the same fingerprint.
     pub has_exact_duplicate: bool,
 }
@@ -48,6 +59,8 @@ pub struct Stats {
     /// Files that are byte-identical copies of another file (all copies minus one per group).
     pub exact_duplicate_files: i64,
     pub exact_duplicate_groups: i64,
+    pub needing_thumbnails: i64,
+    pub reference: i64,
 }
 
 const SCHEMA: &str = r#"
@@ -72,7 +85,82 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS items_sha ON items(sha256);
 CREATE INDEX IF NOT EXISTS items_taken ON items(taken_at);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  start_day TEXT NOT NULL,
+  end_day TEXT NOT NULL,
+  UNIQUE(start_day, end_day)
+);
+CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS item_tags (
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (item_id, tag_id)
+);
+CREATE TABLE IF NOT EXISTS copies (
+  sha256 TEXT PRIMARY KEY,
+  item_id INTEGER,
+  lib_path TEXT NOT NULL,
+  lib_verified INTEGER NOT NULL DEFAULT 0,
+  backup_path TEXT,
+  backup_verified INTEGER NOT NULL DEFAULT 0,
+  copied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS edits (item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS binned (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  moved_to TEXT NOT NULL,
+  at TEXT NOT NULL
+);
 "#;
+
+/// Columns added after the first release; added in place so existing catalogues keep working.
+const ITEM_COLUMNS: &[(&str, &str)] = &[
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("has_camera", "INTEGER NOT NULL DEFAULT 0"),
+    ("thumb", "TEXT"),
+    ("thumb_tried", "INTEGER NOT NULL DEFAULT 0"),
+    ("phash", "INTEGER"),
+    ("dup_status", "TEXT"),
+    ("dup_keeper", "TEXT"),
+    ("is_reference", "INTEGER"),
+    ("topic_id", "INTEGER"),
+];
+
+pub(crate) const ITEM_SELECT: &str = "SELECT i.id, i.source_id, i.path, i.kind, i.size, i.sha256, i.taken_at, i.date_source,
+    i.width, i.height, i.has_camera, i.thumb, i.dup_status, i.is_reference, i.topic_id,
+    EXISTS(SELECT 1 FROM edits e WHERE e.item_id = i.id),
+    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256) > 1
+  FROM items i";
+
+pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
+    Ok(Item {
+        id: r.get(0)?,
+        source_id: r.get(1)?,
+        path: r.get(2)?,
+        kind: Kind::from_str(&r.get::<_, String>(3)?),
+        size: r.get(4)?,
+        sha256: r.get(5)?,
+        taken_at: r.get(6)?,
+        date_source: r.get(7)?,
+        width: r.get(8)?,
+        height: r.get(9)?,
+        has_camera: r.get(10)?,
+        thumb: r.get(11)?,
+        dup_status: r.get(12)?,
+        is_reference: r.get(13)?,
+        topic_id: r.get(14)?,
+        edited: r.get(15)?,
+        has_exact_duplicate: r.get(16)?,
+    })
+}
 
 impl Catalogue {
     pub fn open(path: &Path) -> Result<Self> {
@@ -85,10 +173,50 @@ impl Catalogue {
     }
 
     fn init(conn: Connection) -> Result<Self> {
+        conn.busy_timeout(Duration::from_secs(30))?;
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
+        let existing: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('items')")?
+            .query_map([], |r| r.get(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        for (col, ty) in ITEM_COLUMNS {
+            if !existing.iter().any(|c| c == col) {
+                conn.execute_batch(&format!("ALTER TABLE items ADD COLUMN {col} {ty}"))?;
+            }
+        }
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS items_phash ON items(phash)")?;
         Ok(Self { conn })
     }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    // ---------- settings ----------
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Folders Safelight writes to (library, backup, thumbnail cache). Scans skip these so
+    /// copies aren't re-imported, and clean-up never touches them.
+    pub fn managed_roots(&self) -> Result<Vec<String>> {
+        Ok([self.setting("library_root")?, self.setting("backup_root")?, self.setting("thumb_cache")?]
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    // ---------- sources ----------
 
     pub fn add_source(&self, name: &str, kind: &str, root: &str) -> Result<i64> {
         self.conn.execute(
@@ -127,15 +255,27 @@ impl Catalogue {
         Ok(self.conn.query_row("SELECT root FROM sources WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
+    // ---------- items ----------
+
+    pub fn item(&self, id: i64) -> Result<Option<Item>> {
+        Ok(self
+            .conn
+            .query_row(&format!("{ITEM_SELECT} WHERE i.id = ?1"), [id], item_from_row)
+            .optional()?)
+    }
+
     pub fn stats(&self) -> Result<Stats> {
         let mut s = Stats::default();
         self.conn.query_row(
-            "SELECT COALESCE(SUM(kind='photo'),0), COALESCE(SUM(kind='video'),0), COALESCE(SUM(size),0) FROM items",
+            "SELECT COALESCE(SUM(kind='photo'),0), COALESCE(SUM(kind='video'),0), COALESCE(SUM(size),0),
+                    COALESCE(SUM(thumb_tried = 0),0), COALESCE(SUM(is_reference = 1),0) FROM items",
             [],
             |r| {
                 s.photos = r.get(0)?;
                 s.videos = r.get(1)?;
                 s.total_bytes = r.get(2)?;
+                s.needing_thumbnails = r.get(3)?;
+                s.reference = r.get(4)?;
                 Ok(())
             },
         )?;
@@ -151,28 +291,16 @@ impl Catalogue {
         Ok(s)
     }
 
-    /// Newest first, grouped by month. `limit` caps the number of items returned.
+    /// Newest first, grouped by month. Leaves out confirmed reference images and look-alikes
+    /// the user chose not to keep. `limit` caps the number of items returned.
     pub fn library(&self, limit: i64) -> Result<Vec<MonthGroup>> {
-        let mut st = self.conn.prepare(
-            "SELECT i.id, i.source_id, i.path, i.kind, i.size, i.sha256, i.taken_at, i.date_source,
-                    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256) > 1
-             FROM items i
+        let mut st = self.conn.prepare(&format!(
+            "{ITEM_SELECT}
+             WHERE COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop'
              ORDER BY i.taken_at IS NULL, i.taken_at DESC, i.path
-             LIMIT ?1",
-        )?;
-        let rows = st.query_map([limit], |r| {
-            Ok(Item {
-                id: r.get(0)?,
-                source_id: r.get(1)?,
-                path: r.get(2)?,
-                kind: Kind::from_str(&r.get::<_, String>(3)?),
-                size: r.get(4)?,
-                sha256: r.get(5)?,
-                taken_at: r.get(6)?,
-                date_source: r.get(7)?,
-                has_exact_duplicate: r.get(8)?,
-            })
-        })?;
+             LIMIT ?1"
+        ))?;
+        let rows = st.query_map([limit], item_from_row)?;
         let mut groups: Vec<MonthGroup> = Vec::new();
         for item in rows {
             let item = item?;

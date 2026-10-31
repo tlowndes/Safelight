@@ -3,27 +3,39 @@
 use chrono::NaiveDateTime;
 
 pub fn planned_path(taken_at: Option<NaiveDateTime>, event: Option<&str>, original_name: &str) -> String {
+    planned_path_in(taken_at, None, event, original_name)
+}
+
+/// Like `planned_path`, but an event that started in an earlier month keeps all its files together
+/// in the month it started.
+pub fn planned_path_in(
+    taken_at: Option<NaiveDateTime>,
+    event_start: Option<chrono::NaiveDate>,
+    event: Option<&str>,
+    original_name: &str,
+) -> String {
     let ext = original_name
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())
         .unwrap_or_default();
     match taken_at {
         Some(t) => {
-            let month = t.format("%Y-%m").to_string();
+            let anchor = event_start.unwrap_or(t.date());
+            let month = anchor.format("%Y-%m").to_string();
             let folder = match event.map(clean).filter(|e| !e.is_empty()) {
                 Some(e) => format!("{month} {e}"),
                 None => month,
             };
             let file = t.format("%Y-%m-%d %H.%M.%S").to_string();
             let file = if ext.is_empty() { file } else { format!("{file}.{ext}") };
-            format!("Photos/{}/{}/{}", t.format("%Y"), folder, file)
+            format!("Photos/{}/{}/{}", anchor.format("%Y"), folder, file)
         }
         None => format!("Photos/Undated/{original_name}"),
     }
 }
 
 /// Strip characters Windows won't allow in folder names.
-fn clean(s: &str) -> String {
+pub fn clean(s: &str) -> String {
     s.chars()
         .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
         .collect::<String>()

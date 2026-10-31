@@ -28,6 +28,11 @@ pub fn taken_at(path: &Path, modified: Option<std::time::SystemTime>) -> Option<
     if let Some(d) = from_exif(path) {
         return Some((d, DateSource::Exif));
     }
+    fallback_date(path, modified)
+}
+
+/// Every date source except EXIF, for callers that have already read the camera data.
+pub fn fallback_date(path: &Path, modified: Option<std::time::SystemTime>) -> Option<(NaiveDateTime, DateSource)> {
     if let Some(d) = from_takeout_json(path) {
         return Some((d, DateSource::Takeout));
     }
@@ -37,23 +42,45 @@ pub fn taken_at(path: &Path, modified: Option<std::time::SystemTime>) -> Option<
     modified.map(|m| (DateTime::<Utc>::from(m).naive_utc(), DateSource::Modified))
 }
 
-fn from_exif(path: &Path) -> Option<NaiveDateTime> {
+/// What we read from a file's camera data in one pass.
+#[derive(Debug, Clone, Default)]
+pub struct ExifInfo {
+    pub taken: Option<NaiveDateTime>,
+    /// Camera make or model present: a strong sign this is a real photo, not a screenshot or download.
+    pub has_camera: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+pub fn read_exif(path: &Path) -> Option<ExifInfo> {
     let file = fs::File::open(path).ok()?;
     let mut reader = std::io::BufReader::new(file);
     let ex = exif::Reader::new().read_from_container(&mut reader).ok()?;
+    let mut info = ExifInfo::default();
     for tag in [exif::Tag::DateTimeOriginal, exif::Tag::DateTimeDigitized, exif::Tag::DateTime] {
         if let Some(f) = ex.get_field(tag, exif::In::PRIMARY) {
             if let exif::Value::Ascii(ref v) = f.value {
                 if let Some(raw) = v.first() {
                     let s = String::from_utf8_lossy(raw);
                     if let Ok(d) = NaiveDateTime::parse_from_str(s.trim(), "%Y:%m:%d %H:%M:%S") {
-                        return Some(d);
+                        info.taken = Some(d);
+                        break;
                     }
                 }
             }
         }
     }
-    None
+    info.has_camera = [exif::Tag::Make, exif::Tag::Model]
+        .iter()
+        .any(|t| ex.get_field(*t, exif::In::PRIMARY).map(|f| !f.display_value().to_string().trim_matches('"').trim().is_empty()).unwrap_or(false));
+    let dim = |t| ex.get_field(t, exif::In::PRIMARY).and_then(|f| f.value.get_uint(0));
+    info.width = dim(exif::Tag::PixelXDimension).or_else(|| dim(exif::Tag::ImageWidth));
+    info.height = dim(exif::Tag::PixelYDimension).or_else(|| dim(exif::Tag::ImageLength));
+    Some(info)
+}
+
+fn from_exif(path: &Path) -> Option<NaiveDateTime> {
+    read_exif(path)?.taken
 }
 
 /// Google Takeout writes `photo.jpg.json` (sometimes `photo.jpg.supplemental-metadata.json`
