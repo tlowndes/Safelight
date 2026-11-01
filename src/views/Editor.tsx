@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, dateTimeLabel, defaultEdits, Edits, fileName, Item, MonthGroup, Preset, Rendered } from "../api";
 import Thumb from "../components/Thumb";
+import DeleteDialog from "../components/DeleteDialog";
 
 type Props = { itemId: number | null; groups: MonthGroup[]; onPick: (id: number) => void; onError: (e: string) => void; onChanged: () => void };
 
@@ -23,6 +24,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
   const [aspect, setAspect] = useState<string>("Original");
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const inflight = useRef(false);
   const pending = useRef<Edits | null>(null);
   const loaded = useRef<number | null>(null);
@@ -164,10 +166,23 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           <button className="btn" onClick={() => { clipboard = edits; setStatus("Settings copied"); }}>Copy settings</button>
           <button className="btn" disabled={!clipboard} onClick={() => clipboard && update({ ...clipboard, crop: edits.crop, rotate: edits.rotate })}>Paste</button>
           <button className="btn" onClick={() => { setAspect("Original"); update(defaultEdits()); }}>Reset</button>
+          <button className="btn danger-ghost" onClick={() => setDeleting(true)}>Delete</button>
           <button className="btn" disabled={exporting} onClick={() => doExport(2048)}>Export for web</button>
           <button className="btn pri" disabled={exporting} onClick={() => doExport(null)}>{exporting ? "Exporting…" : "Export"}</button>
         </div>
       </div>
+      {deleting && (
+        <DeleteDialog
+          ids={[itemId]}
+          onClose={() => setDeleting(false)}
+          onError={onError}
+          onDone={() => {
+            const next = photos[idx + 1] ?? photos[idx - 1];
+            onChanged();
+            if (next) onPick(next.id);
+          }}
+        />
+      )}
       <div className="editor">
         <div className="presets">
           <div className="label">Presets</div>

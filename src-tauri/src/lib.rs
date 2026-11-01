@@ -217,6 +217,19 @@ async fn cleanup_run(app: tauri::AppHandle, state: State<'_, AppState>, source_i
     .await
 }
 
+#[tauri::command]
+async fn delete_items(app: tauri::AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<safelight_core::delete::DeleteReport> {
+    let db = state.db_path.clone();
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        safelight_core::delete::delete_items(&cat, &ids, |done, total| {
+            let _ = app.emit("delete-progress", serde_json::json!({ "done": done, "total": total }));
+        })
+        .map_err(err)
+    })
+    .await
+}
+
 // ---------- reference ----------
 
 #[tauri::command]
@@ -379,7 +392,7 @@ pub fn run() {
             get_settings, set_setting,
             dup_groups, dup_resolve,
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
-            cleanup_summary, cleanup_files, cleanup_run,
+            cleanup_summary, cleanup_files, cleanup_run, delete_items,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset
         ])

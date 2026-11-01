@@ -26,6 +26,7 @@ export type CopyReport = { copied: number; backed_up: number; skipped: number; e
 export type SourceCleanup = { source_id: number; name: string; kind: string; files: number; bytes: number; destination: string };
 export type CleanupSummary = { copied: number; backed_up: number; failed: number; sources: SourceCleanup[] };
 export type CleanupReport = { binned: number; freed_bytes: number; skipped: number; errors: string[] };
+export type DeleteReport = { photos: number; files: number; freed_bytes: number; errors: string[] };
 export type Topic = { id: number; name: string; count: number };
 export type Tag = { id: number; name: string; count: number };
 export type RefItem = { item: Item; tags: string[] };
@@ -71,6 +72,7 @@ export const api = {
   cleanupSummary: () => invoke<CleanupSummary>("cleanup_summary"),
   cleanupFiles: (sourceIds: number[]) => invoke<string[]>("cleanup_files", { sourceIds }),
   cleanupRun: (sourceIds: number[]) => invoke<CleanupReport>("cleanup_run", { sourceIds }),
+  deleteItems: (ids: number[]) => invoke<DeleteReport>("delete_items", { ids }),
 
   topics: () => invoke<Topic[]>("topics"),
   createTopic: (name: string) => invoke<number>("create_topic", { name }),
@@ -94,6 +96,7 @@ export const api = {
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),
   onCopyProgress: (cb: (p: Progress) => void) => on("copy-progress", cb),
   onCleanupProgress: (cb: (p: Progress) => void) => on("cleanup-progress", cb),
+  onDeleteProgress: (cb: (p: Progress) => void) => on("delete-progress", cb),
 };
 
 /** Formats the webview can show straight from disk. */

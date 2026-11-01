@@ -144,6 +144,16 @@ fn move_to_safelight_bin(root: &Path, path: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
+/// Send one file to the Recycle Bin, or to a "Safelight bin" folder under `root` on network
+/// drives. Returns where it went.
+pub(crate) fn bin_file(root: &Path, path: &Path) -> Result<String> {
+    if is_network_path(path) {
+        move_to_safelight_bin(root, path).map(|d| d.to_string_lossy().to_string())
+    } else {
+        trash::delete(path).map(|_| "Recycle Bin".to_string()).map_err(|e| crate::Error::Other(e.to_string()))
+    }
+}
+
 /// Bin the originals for the chosen sources. Each file is re-checked (still there, same size)
 /// first; anything that changed since it was copied is left alone.
 pub fn run(cat: &Catalogue, source_ids: &[i64], mut progress: impl FnMut(&CleanupProgress)) -> Result<CleanupReport> {
@@ -164,11 +174,7 @@ pub fn run(cat: &Catalogue, source_ids: &[i64], mut progress: impl FnMut(&Cleanu
             }
         }
         let root = PathBuf::from(roots.get(&source_id).cloned().unwrap_or_default());
-        let moved_to = if is_network_path(p) {
-            move_to_safelight_bin(&root, p).map(|d| d.to_string_lossy().to_string())
-        } else {
-            trash::delete(p).map(|_| "Recycle Bin".to_string()).map_err(|e| crate::Error::Other(e.to_string()))
-        };
+        let moved_to = bin_file(&root, p);
         match moved_to {
             Ok(to) => {
                 cat.conn.execute(

@@ -201,3 +201,23 @@ input { font: inherit; color: inherit; }
 .curve .grid-line { stroke: var(--surf2); fill: none; }
 .curve .line { stroke: var(--amber); stroke-width: 2; fill: none; }
 .curve .pt { fill: var(--panel); stroke: var(--amber); stroke-width: 2; cursor: grab; }
+
+/* ---------- Selecting and deleting ---------- */
+.btn.danger { background: #c4482b; border-color: #c4482b; color: #fff; }
+.btn.danger:hover:not(:disabled) { background: #d8553a; border-color: #d8553a; }
+.btn.danger-ghost:hover { color: var(--bad); border-color: var(--bad); }
+.row.end { justify-content: flex-end; }
+.ph .tick { position: absolute; left: 6px; top: 6px; z-index: 2; width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.85); background: rgba(0, 0, 0, 0.35); color: #1b1208; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.12s; cursor: pointer; }
+.ph:hover .tick, .selecting .ph .tick, .ph .tick.on { opacity: 1; }
+.ph .tick.on { background: var(--amber); border-color: var(--amber); }
+.ph .tick ~ .dup { left: 34px; }
+.ph.picked { outline: 3px solid var(--amber); outline-offset: -3px; }
+.ph.picked img { transform: scale(0.94); border-radius: 4px; }
+.ph img { transition: transform 0.12s; }
+.mh .month-select { margin-left: auto; opacity: 0; } .mh:hover .month-select, .selecting .mh .month-select { opacity: 1; }
+.notice { margin-left: auto; align-self: center; cursor: pointer; color: var(--ok); }
+.select-bar { display: flex; gap: 12px; align-items: center; padding: 12px 28px; border-top: 1px solid var(--line); background: var(--panel); }
+.modal-back { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; }
+.modal { width: 480px; max-width: calc(100% - 48px); background: var(--surf); border: 1px solid var(--line); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.modal h2 { font-size: 19px; font-weight: 650; }
+.modal .progress { margin: 0; max-width: none; }

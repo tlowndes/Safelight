@@ -5,6 +5,7 @@
 pub mod catalogue;
 pub mod cleanup;
 pub mod dates;
+pub mod delete;
 pub mod develop;
 pub mod dupes;
 pub mod hash;

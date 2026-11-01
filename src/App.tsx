@@ -72,7 +72,7 @@ export default function App() {
       <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
-        {view === "library" && <Library groups={groups} stats={stats} sourceCount={sources.length} onAddSources={() => setView("sources")} onOpen={openEditor} />}
+        {view === "library" && <Library groups={groups} stats={stats} sourceCount={sources.length} onAddSources={() => setView("sources")} onOpen={openEditor} onChanged={refresh} onError={setError} />}
         {view === "sources" && <Sources sources={sources} scanProgress={scanProgress} thumbProgress={thumbProgress} onScan={scan} onChanged={refresh} onDone={() => setView("duplicates")} />}
         {view === "duplicates" && <Duplicates stats={stats} onChanged={refresh} onError={setError} onNext={() => setView("organise")} />}
         {view === "organise" && <Organise onChanged={refresh} onError={setError} onNext={() => setView("cleanup")} />}
