@@ -18,6 +18,7 @@ export default function App() {
   const [thumbProgress, setThumbProgress] = useState<Progress | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -39,6 +40,7 @@ export default function App() {
     });
     const uns = [
       api.onScanProgress(setScanProgress),
+      api.onReferenceMoved((count) => setToast(`Moved ${count} likely reference image${count === 1 ? "" : "s"} to Reference › To sort`)),
       api.onThumbProgress((p) => {
         setThumbProgress(p);
         if (p.done % 200 === 0) refresh();
@@ -72,6 +74,7 @@ export default function App() {
       <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
+        {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
         {view === "library" && <Library groups={groups} stats={stats} sourceCount={sources.length} onAddSources={() => setView("sources")} onOpen={openEditor} onChanged={refresh} onError={setError} />}
         {view === "sources" && <Sources sources={sources} scanProgress={scanProgress} thumbProgress={thumbProgress} onScan={scan} onChanged={refresh} onDone={() => setView("duplicates")} />}
         {view === "duplicates" && <Duplicates stats={stats} onChanged={refresh} onError={setError} onNext={() => setView("organise")} />}

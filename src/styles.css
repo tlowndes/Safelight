@@ -221,3 +221,14 @@ input { font: inherit; color: inherit; }
 .modal { width: 480px; max-width: calc(100% - 48px); background: var(--surf); border: 1px solid var(--line); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
 .modal h2 { font-size: 19px; font-weight: 650; }
 .modal .progress { margin: 0; max-width: none; }
+
+/* ---------- Auto reference switch + toast ---------- */
+.switch-row { display: flex; gap: 12px; align-items: center; cursor: pointer; background: var(--surf); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+.switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+.switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--surf2); border: 1px solid var(--line); transition: background 0.15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--mute); transition: transform 0.15s, background 0.15s; }
+.switch-row input:checked + .switch { background: var(--amber); border-color: var(--amber); }
+.switch-row input:checked + .switch::after { transform: translateX(14px); background: #1b1208; }
+.switch-row input:focus-visible + .switch { outline: 2px solid var(--amber); outline-offset: 2px; }
+.toast { position: absolute; z-index: 5; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surf2); border: 1px solid rgba(255, 179, 71, 0.5); padding: 10px 14px; border-radius: 10px; cursor: pointer; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4); white-space: nowrap; }
+.toast button { margin-left: 10px; color: var(--mute); }

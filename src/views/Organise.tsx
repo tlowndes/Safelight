@@ -14,10 +14,13 @@ export default function Organise({ onChanged, onError, onNext }: Props) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<Progress | null>(null);
   const [report, setReport] = useState<CopyReport | null>(null);
+  const [autoRef, setAutoRef] = useState(true);
+  const [checked, setChecked] = useState<string>("");
 
   const load = async () => {
     try {
-      const [p, e, r] = await Promise.all([api.planSummary(), api.suggestEvents(), api.referenceSuggestions()]);
+      const [p, e, r, st] = await Promise.all([api.planSummary(), api.suggestEvents(), api.referenceSuggestions(), api.settings()]);
+      setAutoRef(st.auto_reference);
       setPlan(p);
       setEvents(e);
       setRefs(r);
@@ -121,6 +124,28 @@ export default function Organise({ onChanged, onError, onNext }: Props) {
             ))}
           </div>
 
+          <label className="switch-row">
+            <input type="checkbox" checked={autoRef} onChange={async (e) => {
+              setAutoRef(e.target.checked);
+              await api.setSetting("auto_reference", e.target.checked ? "1" : "0");
+              if (e.target.checked && refs.length) await acceptRefs(true);
+            }} />
+            <span className="switch" />
+            <span>
+              <b>Move likely reference images automatically after each scan</b>
+              <span className="muted small"> · they go to Reference › To sort. Anything you send back as a photo stays put.</span>
+              {checked && <span className="good small"> · {checked}</span>}
+            </span>
+            <button className="btn small" style={{ marginLeft: "auto" }} onClick={async (e) => {
+              e.preventDefault();
+              try {
+                const moved = await api.checkReference();
+                setChecked(moved ? `Moved ${n(moved)} to Reference` : "Nothing new found");
+                load();
+                onChanged();
+              } catch (x) { onError(String(x)); }
+            }}>Check now</button>
+          </label>
           {refs.length > 0 && (
             <div className="ref-card">
               <div className="grow">

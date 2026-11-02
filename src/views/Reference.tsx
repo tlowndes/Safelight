@@ -37,7 +37,14 @@ export default function Reference({ onError, onOpen }: Props) {
       <div className="top">
         <h1>Reference</h1>
         <span className="sub">{n(total)} design images, kept apart from your photos</span>
-        <input className="search" placeholder="Search names and tags…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <button className="btn" style={{ marginLeft: "auto" }} title="Find screenshots and saved images in your library and move them here" onClick={async () => {
+          try {
+            const moved = await api.checkReference();
+            alert(moved ? `Moved ${moved} likely reference image${moved === 1 ? "" : "s"} to To sort.` : "Nothing new found.");
+            load();
+          } catch (e) { onError(String(e)); }
+        }}>Check now</button>
+        <input className="search" style={{ marginLeft: 0 }} placeholder="Search names and tags…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       <div className="split">
         <div className="list">

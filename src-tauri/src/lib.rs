@@ -84,6 +84,10 @@ async fn scan(app: tauri::AppHandle, state: State<'_, AppState>, id: i64) -> Cmd
             let _ = app.emit("scan-progress", p);
         })
         .map_err(err)?;
+        let moved = organise::auto_move_reference(&cat).map_err(err)?;
+        if moved > 0 {
+            let _ = app.emit("reference-moved", moved);
+        }
         imaging::process_thumbnails(&cat, &cache, |p| {
             let _ = app.emit("thumb-progress", p);
         })
@@ -112,6 +116,7 @@ async fn process_thumbnails(app: tauri::AppHandle, state: State<'_, AppState>) -
 struct Settings {
     library_root: Option<String>,
     backup_root: Option<String>,
+    auto_reference: bool,
 }
 
 #[tauri::command]
@@ -122,6 +127,7 @@ async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
         Ok(Settings {
             library_root: cat.setting("library_root").map_err(err)?,
             backup_root: cat.setting("backup_root").map_err(err)?,
+            auto_reference: organise::auto_reference_enabled(&cat).map_err(err)?,
         })
     })
     .await
@@ -129,7 +135,7 @@ async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
 
 #[tauri::command]
 async fn set_setting(state: State<'_, AppState>, key: String, value: String) -> CmdResult<()> {
-    if !matches!(key.as_str(), "library_root" | "backup_root") {
+    if !matches!(key.as_str(), "library_root" | "backup_root" | "auto_reference") {
         return Err(format!("unknown setting {key}"));
     }
     with_db!(state, |cat| cat.set_setting(&key, &value))
@@ -215,6 +221,11 @@ async fn cleanup_run(app: tauri::AppHandle, state: State<'_, AppState>, source_i
         .map_err(err)
     })
     .await
+}
+
+#[tauri::command]
+async fn check_reference(state: State<'_, AppState>) -> CmdResult<u64> {
+    with_db!(state, |cat| organise::move_reference_now(&cat))
 }
 
 #[tauri::command]
@@ -392,7 +403,7 @@ pub fn run() {
             get_settings, set_setting,
             dup_groups, dup_resolve,
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
-            cleanup_summary, cleanup_files, cleanup_run, delete_items,
+            cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset
         ])

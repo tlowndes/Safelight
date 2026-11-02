@@ -37,7 +37,7 @@ export type Edits = {
 };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
-export type Settings = { library_root: string | null; backup_root: string | null };
+export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean };
 
 export const defaultEdits = (): Edits => ({
   exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0, saturation: 0,
@@ -56,7 +56,7 @@ export const api = {
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
   settings: () => invoke<Settings>("get_settings"),
-  setSetting: (key: "library_root" | "backup_root", value: string) => invoke<void>("set_setting", { key, value }),
+  setSetting: (key: "library_root" | "backup_root" | "auto_reference", value: string) => invoke<void>("set_setting", { key, value }),
 
   dupGroups: () => invoke<DupGroup[]>("dup_groups"),
   dupResolve: (keep: number[], drop: number[]) => invoke<void>("dup_resolve", { keep, drop }),
@@ -72,6 +72,7 @@ export const api = {
   cleanupSummary: () => invoke<CleanupSummary>("cleanup_summary"),
   cleanupFiles: (sourceIds: number[]) => invoke<string[]>("cleanup_files", { sourceIds }),
   cleanupRun: (sourceIds: number[]) => invoke<CleanupReport>("cleanup_run", { sourceIds }),
+  checkReference: () => invoke<number>("check_reference"),
   deleteItems: (ids: number[]) => invoke<DeleteReport>("delete_items", { ids }),
 
   topics: () => invoke<Topic[]>("topics"),
@@ -96,6 +97,7 @@ export const api = {
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),
   onCopyProgress: (cb: (p: Progress) => void) => on("copy-progress", cb),
   onCleanupProgress: (cb: (p: Progress) => void) => on("cleanup-progress", cb),
+  onReferenceMoved: (cb: (n: number) => void) => on("reference-moved", cb),
   onDeleteProgress: (cb: (p: Progress) => void) => on("delete-progress", cb),
 };
 

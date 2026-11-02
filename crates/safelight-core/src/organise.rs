@@ -185,6 +185,28 @@ pub fn reference_suggestions(cat: &Catalogue) -> Result<Vec<crate::catalogue::It
         .collect::<std::result::Result<_, _>>()?)
 }
 
+/// Whether likely reference images move to Reference by themselves after a scan (on unless
+/// switched off).
+pub fn auto_reference_enabled(cat: &Catalogue) -> Result<bool> {
+    Ok(cat.setting("auto_reference")?.as_deref() != Some("0"))
+}
+
+/// Move every likely reference image to Reference › To sort, if the setting is on. Images the
+/// user has already sent back as photos are never picked again. Returns how many moved.
+pub fn auto_move_reference(cat: &Catalogue) -> Result<u64> {
+    if !auto_reference_enabled(cat)? {
+        return Ok(0);
+    }
+    move_reference_now(cat)
+}
+
+/// Move every likely reference image now, whatever the setting says ("Check now").
+pub fn move_reference_now(cat: &Catalogue) -> Result<u64> {
+    let ids: Vec<i64> = reference_suggestions(cat)?.into_iter().map(|i| i.id).collect();
+    set_reference(cat, &ids, true)?;
+    Ok(ids.len() as u64)
+}
+
 /// Mark items as reference (or as normal photos). New reference items go to the "To sort" topic.
 pub fn set_reference(cat: &Catalogue, ids: &[i64], is_reference: bool) -> Result<()> {
     let to_sort = crate::reference::ensure_topic(cat, "To sort")?;
