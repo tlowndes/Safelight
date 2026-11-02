@@ -1,3 +1,5 @@
+mod update;
+
 use base64::Engine;
 use safelight_core::{
     cleanup, develop::{self, Edits, Preset}, dupes, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
@@ -241,6 +243,24 @@ async fn delete_items(app: tauri::AppHandle, state: State<'_, AppState>, ids: Ve
     .await
 }
 
+// ---------- updates ----------
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> CmdResult<Option<update::UpdateInfo>> {
+    let current = app.package_info().version.to_string();
+    blocking(move || update::check(&current)).await
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, url: String) -> CmdResult<()> {
+    blocking(move || update::install(&app, &url)).await
+}
+
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 // ---------- reference ----------
 
 #[tauri::command]
@@ -403,7 +423,7 @@ pub fn run() {
             get_settings, set_setting,
             dup_groups, dup_resolve,
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
-            cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference,
+            cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset
         ])

@@ -33,7 +33,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
-      - run: npm run tauri build
+      # Each build gets its own version (0.1.<run number>) so installed copies can tell an update is newer.
+      - name: Set version
+        shell: bash
+        run: echo '{"version":"0.1.${{ github.run_number }}"}' > src-tauri/tauri.ci.json
+      - run: npm run tauri build -- --config src-tauri/tauri.ci.json
       # The account's Actions storage can fill up, so a failed artefact upload shouldn't fail the build.
       - uses: actions/upload-artifact@v4
         continue-on-error: true
@@ -48,8 +52,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0-preview.${{ github.run_number }}
-          name: Safelight preview ${{ github.run_number }}
+          tag_name: v0.1.${{ github.run_number }}
+          name: Safelight 0.1.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |

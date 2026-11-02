@@ -1,3 +1,4 @@
+import Updater from "./Updater";
 import { formatBytes, n, Progress, Source, Stats } from "../api";
 
 export type View = "library" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "sources";
@@ -59,6 +60,7 @@ export default function Sidebar({ view, onView, sources, stats, thumbs }: Props)
           </div>
         </>
       )}
+      <Updater />
     </aside>
   );
 }

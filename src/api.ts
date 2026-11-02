@@ -27,6 +27,7 @@ export type SourceCleanup = { source_id: number; name: string; kind: string; fil
 export type CleanupSummary = { copied: number; backed_up: number; failed: number; sources: SourceCleanup[] };
 export type CleanupReport = { binned: number; freed_bytes: number; skipped: number; errors: string[] };
 export type DeleteReport = { photos: number; files: number; freed_bytes: number; errors: string[] };
+export type UpdateInfo = { current: string; version: string; notes: string; url: string; size: number; page: string };
 export type Topic = { id: number; name: string; count: number };
 export type Tag = { id: number; name: string; count: number };
 export type RefItem = { item: Item; tags: string[] };
@@ -73,6 +74,10 @@ export const api = {
   cleanupFiles: (sourceIds: number[]) => invoke<string[]>("cleanup_files", { sourceIds }),
   cleanupRun: (sourceIds: number[]) => invoke<CleanupReport>("cleanup_run", { sourceIds }),
   checkReference: () => invoke<number>("check_reference"),
+  appVersion: () => invoke<string>("app_version"),
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  installUpdate: (url: string) => invoke<void>("install_update", { url }),
+  onUpdateProgress: (cb: (p: Progress) => void) => on("update-progress", cb),
   deleteItems: (ids: number[]) => invoke<DeleteReport>("delete_items", { ids }),
 
   topics: () => invoke<Topic[]>("topics"),

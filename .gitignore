@@ -3,3 +3,4 @@ dist/
 target/
 src-tauri/gen/
 *.sqlite
+src-tauri/tauri.ci.json
