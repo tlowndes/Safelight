@@ -84,8 +84,8 @@ fn from_exif(path: &Path) -> Option<NaiveDateTime> {
 }
 
 /// Google Takeout writes `photo.jpg.json` (sometimes `photo.jpg.supplemental-metadata.json`
-/// or `photo.json`) next to each file, with `photoTakenTime.timestamp` in Unix seconds.
-fn from_takeout_json(path: &Path) -> Option<NaiveDateTime> {
+/// or `photo.json`) next to each file. Returns that sidecar, parsed, if there is one.
+pub fn takeout_sidecar(path: &Path) -> Option<serde_json::Value> {
     let name = path.file_name()?.to_str()?;
     let dir = path.parent()?;
     let stem = path.file_stem()?.to_str()?;
@@ -94,21 +94,20 @@ fn from_takeout_json(path: &Path) -> Option<NaiveDateTime> {
         format!("{name}.supplemental-metadata.json"),
         format!("{stem}.json"),
     ];
-    for c in candidates {
-        let p = dir.join(&c);
-        if let Ok(text) = fs::read_to_string(&p) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let ts = v["photoTakenTime"]["timestamp"]
-                    .as_str()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .or_else(|| v["photoTakenTime"]["timestamp"].as_i64());
-                if let Some(ts) = ts {
-                    return DateTime::from_timestamp(ts, 0).map(|d| d.naive_utc());
-                }
-            }
-        }
-    }
-    None
+    candidates
+        .iter()
+        .filter_map(|c| fs::read_to_string(dir.join(c)).ok())
+        .find_map(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+}
+
+/// Takeout's `photoTakenTime.timestamp` is in Unix seconds.
+fn from_takeout_json(path: &Path) -> Option<NaiveDateTime> {
+    let v = takeout_sidecar(path)?;
+    let ts = v["photoTakenTime"]["timestamp"]
+        .as_str()
+        .and_then(|s| s.parse::<i64>().ok())
+        .or_else(|| v["photoTakenTime"]["timestamp"].as_i64())?;
+    DateTime::from_timestamp(ts, 0).map(|d| d.naive_utc())
 }
 
 /// Recognises common phone and camera naming patterns, e.g.

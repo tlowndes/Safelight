@@ -20,6 +20,49 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p safelight-core
 
+  # Smart tagging with the real models: the same files the app downloads on first use.
+  smart-tagging-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: models
+          key: smart-models-v2
+      - name: Download models and test pictures
+        run: |
+          mkdir -p models && cd models
+          get() { [ -s "$1" ] || curl -fsSL --retry 3 -o "$1" "$2"; }
+          HF=https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main
+          get clip-vision.onnx $HF/onnx/vision_model.onnx
+          get clip-text.onnx $HF/onnx/text_model.onnx
+          get clip-tokenizer.json $HF/tokenizer.json
+          get face-detect.onnx https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          get face-recognise.onnx https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+          get test-face-a.jpg https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/lena.jpg
+          get test-face-b.jpg https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/messi5.jpg
+          cp test-face-b.jpg test-football.jpg
+          ls -la
+      - name: Run model tests
+        env:
+          SAFELIGHT_MODELS: ${{ github.workspace }}/models
+          SAFELIGHT_MODELS_REQUIRED: "1"
+        run: cargo test -p safelight-core --release -- --nocapture clip faces analyse
+      # Informational: whether the half-size (fp16) CLIP files also work, to shrink the download later.
+      - name: Try the fp16 CLIP files
+        continue-on-error: true
+        env:
+          SAFELIGHT_MODELS: ${{ github.workspace }}/models-fp16
+          SAFELIGHT_MODELS_REQUIRED: "1"
+        run: |
+          mkdir -p models-fp16 && cp models/face-* models/test-* models/clip-tokenizer.json models-fp16/
+          HF=https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main
+          curl -fsSL --retry 3 -o models-fp16/clip-vision.onnx $HF/onnx/vision_model_fp16.onnx
+          curl -fsSL --retry 3 -o models-fp16/clip-text.onnx $HF/onnx/text_model_fp16.onnx
+          cargo test -p safelight-core --release -- --nocapture clip analyse
+
   capture-tests:
     runs-on: ubuntu-latest
     steps:

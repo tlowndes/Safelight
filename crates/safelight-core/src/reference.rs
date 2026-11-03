@@ -25,6 +25,8 @@ pub struct Tag {
 pub struct RefItem {
     pub item: Item,
     pub tags: Vec<String>,
+    /// Tags smart tagging suggested (type, layout, medium), separate from yours.
+    pub smart_tags: Vec<String>,
 }
 
 pub fn ensure_topic(cat: &Catalogue, name: &str) -> Result<i64> {
@@ -127,8 +129,12 @@ pub fn items(cat: &Catalogue, topic_id: Option<i64>, tag: Option<&str>) -> Resul
     items
         .into_iter()
         .map(|item| {
-            let tags = tag_st.query_map([item.id], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
-            Ok(RefItem { item, tags })
+            let tags: Vec<String> = tag_st.query_map([item.id], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
+            let smart_tags = crate::smart::design_tags(cat, &item.sha256)?
+                .into_iter()
+                .filter(|t: &String| !tags.iter().any(|m: &String| m.eq_ignore_ascii_case(t)))
+                .collect();
+            Ok(RefItem { item, tags, smart_tags })
         })
         .collect()
 }

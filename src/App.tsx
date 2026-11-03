@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, Item, MonthGroup, Progress, ShotMove, Source, Stats } from "./api";
+import { api, Item, MonthGroup, Progress, ShotMove, SmartState, Source, Stats } from "./api";
 import Sidebar, { View } from "./components/Sidebar";
 import Library from "./views/Library";
 import Sources from "./views/Sources";
@@ -9,6 +9,7 @@ import Cleanup from "./views/Cleanup";
 import Reference from "./views/Reference";
 import Editor from "./views/Editor";
 import Hidden from "./views/Hidden";
+import People from "./views/People";
 import Screenshots from "./views/Screenshots";
 import ShortcutsDialog from "./components/ShortcutsDialog";
 import { CaptureView } from "./capture/ui/CaptureView";
@@ -27,6 +28,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
+  const [smart, setSmart] = useState<SmartState | null>(null);
+  const [smartProgress, setSmartProgress] = useState<Progress | null>(null);
+  const [query, setQuery] = useState("");
   const [shotsWaiting, setShotsWaiting] = useState(0);
   const [shotTick, setShotTick] = useState(0);
   const [filed, setFiled] = useState<ShotMove | null>(null);
@@ -67,6 +71,29 @@ export default function App() {
     }
   }, []);
 
+  const refreshSmart = useCallback(() => api.smartStatus().then((s) => { setSmart(s); return s; }).catch(() => null), []);
+
+  /** Smart tagging in the background: places straight away, then pictures if the models are in. */
+  const runSmart = useCallback(async () => {
+    try {
+      await api.runSmart();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSmartProgress(null);
+      refreshSmart();
+    }
+  }, [refreshSmart]);
+  const autoSmart = useCallback(() => refreshSmart().then((s) => { if (s && s.enabled && !s.running) runSmart(); }), [refreshSmart, runSmart]);
+
+  useEffect(() => {
+    autoSmart();
+    const un = api.onSmartProgress((p) => {
+      setSmartProgress(p);
+      if (p.done % 50 === 0) refreshSmart();
+    });
+    return () => { un.then((f) => f()); };
+  }, [autoSmart, refreshSmart]);
   // Capture lives at the top so its global shortcuts and the tray work from every screen.
   const cap = useCapture({ onImported: () => void refresh(), onShow: () => setView("capture") });
 
@@ -100,7 +127,14 @@ export default function App() {
       setScanProgress(null);
       setThumbProgress(null);
       refresh();
+      autoSmart();
     }
+  };
+
+  /** Jump to the library with a search filled in (from People & places, or the viewer). */
+  const searchLibrary = (q: string) => {
+    setQuery(q);
+    setView("library");
   };
 
   const openEditor = (id: number) => {
@@ -112,11 +146,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} shotsWaiting={shotsWaiting} recording={cap.rec.status} onShortcuts={() => setKeysOpen(true)} />
+      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} smart={smartProgress} people={smart?.people ?? 0} shotsWaiting={shotsWaiting} recording={cap.rec.status} onShortcuts={() => setKeysOpen(true)} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
         {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
-        {view === "library" && <Library groups={groups} stats={stats} sources={sources} onAddSources={() => setView("sources")} onEdit={openEditor} onPatch={patchItems} onChanged={refresh} onError={setError} />}
+        {view === "library" && <Library groups={groups} stats={stats} sources={sources} query={query} onQuery={setQuery} smartReady={!!smart?.models_ready} onAddSources={() => setView("sources")} onEdit={openEditor} onPatch={patchItems} onChanged={refresh} onError={setError} />}
+        {view === "people" && <People status={smart} progress={smartProgress} onRun={runSmart} onStatus={refreshSmart} onSearch={searchLibrary} onError={setError} />}
         {filed && view !== "screenshots" && (
           <div className="toast" onClick={() => { setFiled(null); setView("screenshots"); }}>
             Screenshot filed as {filed.name} · <u onClick={async (e) => {

@@ -1,8 +1,9 @@
 //! Safelight core: scanning sources, reading capture dates, fingerprinting files, finding
-//! duplicates, planning and copying the organised library, NAS backup, clean-up, reference, editing and
-//! screenshot import rules (from Snapsort).
+//! duplicates, planning and copying the organised library, NAS backup, clean-up, reference, editing,
+//! screenshot import rules (from Snapsort) and on-device smart tagging (faces, places, scenes).
 //! No UI code lives here, so it can be tested on any platform.
 
+pub mod ai;
 pub mod backup;
 pub mod catalogue;
 pub mod cleanup;
@@ -20,6 +21,7 @@ pub mod organise;
 pub mod plan;
 pub mod reference;
 pub mod scan;
+pub mod smart;
 pub mod screenshots;
 pub mod secret;
 #[cfg(windows)]

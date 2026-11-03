@@ -351,6 +351,40 @@ input { font: inherit; color: inherit; }
 kbd { min-width: 24px; height: 24px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font: 600 12px/1 inherit; font-family: inherit; background: var(--surf2); color: var(--text); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.3), inset 0 0 0 1px var(--line); white-space: nowrap; }
 .keys-hint { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 
+/* ---------- Smart tagging: people, places, things ---------- */
+.seg.tabs button { width: auto; padding: 0 12px; }
+.smart-card { max-width: 720px; } .smart-card.slim { padding: 14px 16px; gap: 10px; }
+.smart-card p { line-height: 1.5; }
+.model-list { padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.toggle-label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.toggle-label input { accent-color: var(--amber); }
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 18px 12px; }
+.person { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.person .inline-input { width: 100%; text-align: center; margin: 0; }
+.person-name { height: 34px; display: flex; align-items: center; } .person-name b { font-weight: 600; }
+.avatar { display: inline-block; flex: none; border-radius: 50%; overflow: hidden; background: var(--surf2); box-shadow: inset 0 0 0 1px var(--line); }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.person-face:hover .avatar, .person-face:focus-visible .avatar { box-shadow: 0 0 0 2px var(--amber); }
+.name-input { font-size: 15px; font-weight: 600; margin: 0; min-width: 200px; }
+.faces { display: flex; flex-wrap: wrap; gap: 10px; }
+.face { position: relative; border-radius: 50%; }
+.face .x { position: absolute; top: -2px; right: -2px; width: 22px; height: 22px; border-radius: 50%; background: var(--panel); box-shadow: 0 0 0 1px var(--line2); display: none; align-items: center; justify-content: center; font-size: 14px; }
+.face:hover .x, .face:focus-visible .x { display: flex; }
+.face:hover .avatar { opacity: 0.6; }
+.places { display: flex; flex-direction: column; gap: 18px; max-width: 900px; }
+.place-country { display: flex; gap: 10px; align-items: baseline; padding: 0 2px 8px; }
+.place-country b { font: 600 17px/1.2 var(--display); letter-spacing: -0.02em; } .place-country span { color: var(--dim); }
+.place-country:hover b { text-decoration: underline; }
+.tag .count { color: var(--dim); margin-left: 4px; }
+.tag-cloud.big .tag { font-size: 13px; padding: 6px 12px; }
+.tag.smart { background: transparent; box-shadow: inset 0 0 0 1px var(--line2); border-radius: 14px; }
+.tag.smart:hover { color: var(--text); }
+.suggest { margin: 0 8px 6px; font-size: 12px; display: flex; gap: 6px; align-items: center; color: var(--mute); }
+.smart-facts { display: flex; flex-direction: column; gap: 8px; }
+.smart-facts .tag-cloud { padding: 0; }
+.similar-bar { display: flex; align-items: center; gap: 10px; margin: 0 24px 10px; padding: 8px 12px; border-radius: 10px; background: var(--amberbg); color: var(--amber-text); }
+.similar-bar button { margin-left: auto; }
+
 /* ---------- NAS backup ---------- */
 .backup { display: flex; flex-direction: column; gap: 8px; }
 .path-input { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 12px; outline: none; }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, dateTimeLabel, FolderNode, FolderRef, formatBytes, Item, monthLabel, MonthGroup, n, Source, Stats } from "../api";
+import { api, dateTimeLabel, fileName, FolderNode, FolderRef, formatBytes, Item, monthLabel, MonthGroup, n, Source, Stats } from "../api";
 import Thumb from "../components/Thumb";
 import FolderTree from "../components/FolderTree";
 import DeleteDialog from "../components/DeleteDialog";
@@ -9,6 +9,10 @@ import { isTyping } from "../shortcuts";
 type Filter = "all" | "photo" | "video" | "picks" | "rated" | "rejected" | "dupes" | "edited";
 type Props = {
   groups: MonthGroup[];
+  /** Search words, kept by the app so other screens can search the library. */
+  query: string;
+  onQuery: (q: string) => void;
+  smartReady: boolean;
   stats: Stats | null;
   sources: Source[];
   onAddSources: () => void;
@@ -23,7 +27,7 @@ function folderPanelSaved() {
   try { return localStorage.getItem(FOLDERS_KEY) === "1"; } catch { return false; }
 }
 
-export default function Library({ groups: allGroups, stats, sources, onAddSources, onEdit, onPatch, onChanged, onError }: Props) {
+export default function Library({ groups: allGroups, query, onQuery: setQuery, smartReady, stats, sources, onAddSources, onEdit, onPatch, onChanged, onError }: Props) {
   // Folder tree: the panel, the chosen folder, and what's inside it.
   const [showFolders, setShowFolders] = useState(folderPanelSaved);
   const [tree, setTree] = useState<FolderNode[]>([]);
@@ -53,7 +57,9 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
   const folderNode = folder ? tree.find((f) => f.source_id === folder.source_id && f.path === folder.path) : undefined;
 
   const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
+  /** Items smart search matched (people, places, tags, look), or null when not searching. */
+  const [smartIds, setSmartIds] = useState<Set<number> | null>(null);
+  const [similar, setSimilar] = useState<{ of: Item; items: Item[] } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<number | null>(null);
   const [loupe, setLoupe] = useState<number | null>(null);
@@ -62,7 +68,27 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
   const anchor = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  // Smart search runs on the Rust side; wait for a pause in typing.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setSmartIds(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      api.smartSearch(q).then((ids) => live && setSmartIds(new Set(ids))).catch(() => live && setSmartIds(null));
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [query]);
+
+  const showSimilar = async (item: Item) => {
+    try {
+      const items = await api.similar(item.id);
+      setLoupe(null);
+      setSimilar({ of: item, items: [item, ...items] });
+    } catch (e) { onError(String(e)); }
+  };
+
   const shown = useMemo(() => {
+    if (similar) return [{ month: "similar", items: similar.items }];
     const q = query.trim().toLowerCase();
     const keep = (i: Item) =>
       (filter === "all" ||
@@ -72,9 +98,9 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
           : filter === "rejected" ? i.flag === -1
           : filter === "rated" ? i.rating > 0
           : i.kind === filter)) &&
-      (!q || i.path.toLowerCase().includes(q) || (i.taken_at ?? "").includes(q));
+      (!q || i.path.toLowerCase().includes(q) || (i.taken_at ?? "").includes(q) || !!smartIds?.has(i.id));
     return groups.map((g) => ({ ...g, items: g.items.filter(keep) })).filter((g) => g.items.length > 0);
-  }, [groups, filter, query]);
+  }, [groups, filter, query, smartIds, similar]);
   const flat = useMemo(() => shown.flatMap((g) => g.items), [shown]);
   const indexOf = (id: number | null) => (id === null ? -1 : flat.findIndex((i) => i.id === id));
 
@@ -238,8 +264,8 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
             : `${n(visible)} from ${sources.length} source${sources.length === 1 ? "" : "s"}`}
         </span>
         <label className="vh" htmlFor="library-search">Search</label>
-        <input id="library-search" className="search" type="search" placeholder="Search file names or dates, e.g. 2024-06" value={query}
-          onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && (e.currentTarget.blur(), setQuery(""))} />
+        <input id="library-search" className="search" type="search" placeholder={smartReady ? "Search people, places, things or dates" : "Search names, places, tags or dates"} value={query}
+          onChange={(e) => { setQuery(e.target.value); setSimilar(null); }} onKeyDown={(e) => e.key === "Escape" && (e.currentTarget.blur(), setQuery(""))} />
         <div className="seg" role="group" aria-label="Panels">
           <button className={showFolders ? "on" : ""} aria-pressed={showFolders} aria-label="Folders (F)" title="Folders (F)" onClick={() => setShowFolders(!showFolders)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z" /></svg>
@@ -264,13 +290,19 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
         {chip("edited", "Edited")}
         {chip("dupes", "Exact copies")}
       </div>
+      {similar && (
+        <div className="similar-bar" role="status">
+          <span>Showing {n(similar.items.length - 1)} photo{similar.items.length === 2 ? "" : "s"} that look like {fileName(similar.of.path)}</span>
+          <button className="btn small" onClick={() => setSimilar(null)}>Back to all photos</button>
+        </div>
+      )}
       <div className={`lib-body ${showFolders ? "with-folders" : ""}`}>
       {showFolders && <FolderTree nodes={tree} sources={sources} selected={folder} onSelect={(f) => { setFolder(f); setSelected(new Set()); setCursor(null); }} />}
       <div ref={gridRef} className={`grid ${selecting ? "selecting" : ""}`}>
         {shown.map((g) => (
           <section key={g.month} id={`m-${g.month}`}>
             <div className="mh">
-              <b>{monthLabel(g.month)}</b><span>{n(g.items.length)} items</span>
+              <b>{g.month === "similar" ? "Looks alike" : monthLabel(g.month)}</b><span>{n(g.items.length)} items</span>
               <button className="link month-select" onClick={() => selectMonth(g)}>
                 {g.items.every((i) => selected.has(i.id)) ? "Deselect month" : "Select month"}
               </button>
@@ -298,7 +330,7 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
             </div>
           </section>
         ))}
-        {shown.length === 0 && <p className="muted">{folder && folderGroups === null ? "Loading…" : "No matches."}</p>}
+        {shown.length === 0 && <p className="muted">{folder && folderGroups === null ? "Loading…" : "No matches."}{!smartReady && query.trim() && !folder ? " Turn on smart tagging in People & places to search by what's in a photo." : ""}</p>}
       </div>
       </div>
       {!selecting && (
@@ -362,6 +394,8 @@ export default function Library({ groups: allGroups, stats, sources, onAddSource
             if (next) setLoupe(next.id); else setLoupe(null);
           }}
           sourceName={sourceName}
+          onSimilar={smartReady ? showSimilar : undefined}
+          onSearch={(q) => { setLoupe(null); setSimilar(null); setQuery(q); }}
         />
       )}
     </>

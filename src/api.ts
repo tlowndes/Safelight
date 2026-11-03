@@ -42,7 +42,7 @@ export type DeleteReport = { photos: number; files: number; freed_bytes: number;
 export type UpdateInfo = { current: string; version: string; notes: string; url: string; size: number; page: string };
 export type Topic = { id: number; name: string; count: number };
 export type Tag = { id: number; name: string; count: number };
-export type RefItem = { item: Item; tags: string[] };
+export type RefItem = { item: Item; tags: string[]; /** suggested by smart tagging */ smart_tags: string[] };
 export type Edits = {
   exposure: number; contrast: number; highlights: number; shadows: number; temperature: number; tint: number;
   vibrance: number; saturation: number; curve: [number, number][]; hsl: [number, number, number][];
@@ -50,6 +50,18 @@ export type Edits = {
 };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
+export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean; smart_tagging: boolean };
+export type ModelFile = { file: string; purpose: string; url: string; size_mb: number };
+export type SmartState = {
+  models_ready: boolean; missing: ModelFile[]; download_mb: number; total: number; analysed: number; located: number;
+  faces: number; people: number; named: number; running: boolean; enabled: boolean;
+};
+export type Person = { id: number; name: string | null; photos: number; cover: string | null };
+export type FaceRow = { id: number; crop: string | null; item_id: number };
+export type PlaceCount = { country: string; town: string | null; count: number };
+export type TagCount = { name: string; count: number };
+export type ItemSmart = { people: string[]; faces: number; place: string | null; tags: string[] };
+export type TopicSuggestion = { item_id: number; topic_id: number; topic: string };
 export type BackupReport = { backed_up: number; skipped: number; errors: string[]; finished_at: string; automatic: boolean };
 export type BackupStatus = {
   backup_root: string | null; weekly: boolean; reachable: boolean; last_run: string | null; next_due: string | null;
@@ -67,7 +79,6 @@ export type ShotSettings = {
 export type ShotCategory = { id: string; label: string; folder: string };
 export type ShotInfo = { settings: ShotSettings; categories: ShotCategory[]; ocr: boolean; waiting: number };
 export type ShotSettingKey = "folder" | "destination" | "watch" | "reader" | "claude_model" | "auto_file" | "sureness" | "date_prefix";
-export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean };
 
 export const defaultEdits = (): Edits => ({
   exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0, saturation: 0,
@@ -87,7 +98,7 @@ export const api = {
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
   settings: () => invoke<Settings>("get_settings"),
-  setSetting: (key: "library_root" | "backup_root" | "auto_reference" | "auto_backup", value: string) => invoke<void>("set_setting", { key, value }),
+  setSetting: (key: "library_root" | "backup_root" | "auto_reference" | "auto_backup" | "smart_tagging", value: string) => invoke<void>("set_setting", { key, value }),
 
   dupGroups: () => invoke<DupGroup[]>("dup_groups"),
   dupResolve: (keep: number[], drop: number[]) => invoke<void>("dup_resolve", { keep, drop }),
@@ -145,6 +156,25 @@ export const api = {
   hiddenItems: () => invoke<Item[]>("hidden_items"),
   viewImage: (id: number) => invoke<string>("view_image", { id }),
 
+  smartStatus: () => invoke<SmartState>("smart_status"),
+  downloadModels: () => invoke<void>("download_models"),
+  runSmart: () => invoke<number>("run_smart"),
+  stopSmart: () => invoke<void>("stop_smart"),
+  smartSearch: (query: string) => invoke<number[]>("smart_search", { query }),
+  similar: (id: number) => invoke<Item[]>("similar", { id }),
+  people: () => invoke<Person[]>("people"),
+  personFaces: (id: number) => invoke<FaceRow[]>("person_faces", { id }),
+  personItems: (id: number) => invoke<Item[]>("person_items", { id }),
+  namePerson: (id: number, name: string) => invoke<number>("name_person", { id, name }),
+  mergePeople: (from: number, into: number) => invoke<void>("merge_people", { from, into }),
+  removeFace: (id: number) => invoke<void>("remove_face", { id }),
+  hidePerson: (id: number) => invoke<void>("hide_person", { id }),
+  places: () => invoke<PlaceCount[]>("places"),
+  smartTags: (kind: "scene" | "design") => invoke<TagCount[]>("smart_tags", { kind }),
+  itemSmart: (id: number) => invoke<ItemSmart>("item_smart", { id }),
+  topicSuggestions: () => invoke<TopicSuggestion[]>("topic_suggestions"),
+  onModelProgress: (cb: (p: Progress) => void) => on("model-progress", cb),
+  onSmartProgress: (cb: (p: Progress) => void) => on("smart-progress", cb),
   shotInfo: () => invoke<ShotInfo>("shot_info"),
   shotSet: (key: ShotSettingKey, value: string) => invoke<void>("shot_set", { key, value }),
   shotSetApiKey: (apiKey: string) => invoke<void>("shot_set_api_key", { apiKey }),

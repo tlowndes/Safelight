@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, n, RefItem, Tag, Topic } from "../api";
+import { api, fileName, n, RefItem, Tag, Topic, TopicSuggestion } from "../api";
 import Thumb from "../components/Thumb";
 
 type Props = { onError: (e: string) => void; onOpen: (id: number) => void };
@@ -14,6 +14,9 @@ export default function Reference({ onError, onOpen }: Props) {
   const [newTopic, setNewTopic] = useState("");
   const [newTag, setNewTag] = useState("");
   const [query, setQuery] = useState("");
+  const [smartIds, setSmartIds] = useState<Set<number> | null>(null);
+  const [suggestions, setSuggestions] = useState<Map<number, TopicSuggestion>>(new Map());
+  const [similar, setSimilar] = useState<{ of: RefItem; shas: Set<string> } | null>(null);
 
   const load = async () => {
     try {
@@ -27,9 +30,36 @@ export default function Reference({ onError, onOpen }: Props) {
   };
   useEffect(() => { load(); }, [topic, tag]);
 
+  // Topic guesses for images still in To sort (needs smart tagging).
+  const loadSuggestions = () => api.topicSuggestions().then((s) => setSuggestions(new Map(s.map((x) => [x.item_id, x])))).catch(() => {});
+  useEffect(() => { loadSuggestions(); }, [items.length]);
+
+  // Search by words: names and tags here, plus smart search (what the image looks like).
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setSmartIds(null); return; }
+    let live = true;
+    const t = setTimeout(() => api.smartSearch(q).then((ids) => live && setSmartIds(new Set(ids))).catch(() => {}), 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [query]);
+
+  const accept = async (list: TopicSuggestion[]) => {
+    try {
+      for (const t of new Set(list.map((s) => s.topic_id))) await api.setTopic(list.filter((s) => s.topic_id === t).map((s) => s.item_id), t);
+      await load();
+      loadSuggestions();
+    } catch (e) { onError(String(e)); }
+  };
+
   const ids = [...selected];
   const total = topics.reduce((a, t) => a + t.count, 0);
-  const shown = query ? items.filter((i) => i.item.path.toLowerCase().includes(query.toLowerCase()) || i.tags.some((t) => t.toLowerCase().includes(query.toLowerCase()))) : items;
+  const ql = query.trim().toLowerCase();
+  const shown = similar
+    ? items.filter((i) => i.item.id === similar.of.item.id || similar.shas.has(i.item.sha256))
+    : ql
+      ? items.filter((i) => i.item.path.toLowerCase().includes(ql) || [...i.tags, ...i.smart_tags].some((t) => t.toLowerCase().includes(ql)) || !!smartIds?.has(i.item.id))
+      : items;
+  const pending = shown.map((r) => suggestions.get(r.item.id)).filter((s): s is TopicSuggestion => !!s);
   const title = topic === null ? "All reference" : topics.find((t) => t.id === topic)?.name ?? "";
 
   return (
@@ -44,7 +74,7 @@ export default function Reference({ onError, onOpen }: Props) {
             load();
           } catch (e) { onError(String(e)); }
         }}>Check now</button>
-        <input className="search" style={{ marginLeft: 0 }} placeholder="Search names and tags…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="search" style={{ marginLeft: 0 }} placeholder="Search tags, or describe it: “warm serif poster”" value={query} onChange={(e) => { setQuery(e.target.value); setSimilar(null); }} />
       </div>
       <div className="split">
         <div className="list">
@@ -86,7 +116,13 @@ export default function Reference({ onError, onOpen }: Props) {
         <div className="detail">
           <div className="row start">
             <b className="h3">{title}</b>
-            <span className="muted">{n(shown.length)} images{tag && ` · tagged ${tag}`}</span>
+            <span className="muted">{n(shown.length)} images{tag && ` · tagged ${tag}`}{similar && ` that look like ${fileName(similar.of.item.path)}`}</span>
+            {similar && <button className="btn small" onClick={() => setSimilar(null)}>Show all</button>}
+            {!selected.size && pending.length > 0 && (
+              <button className="btn small" style={{ marginLeft: "auto" }} title="Move each image to the topic Safelight suggests" onClick={() => accept(pending)}>
+                Sort {n(pending.length)} into suggested topics
+              </button>
+            )}
             {selected.size > 0 && (
               <div className="row" style={{ marginLeft: "auto" }}>
                 <span className="amber">{selected.size} selected · click a topic to move them</span>
@@ -118,8 +154,23 @@ export default function Reference({ onError, onOpen }: Props) {
                       {r.tags.map((t) => (
                         <span key={t} className="tag small" onClick={async () => { await api.removeTag(r.item.id, t); load(); }} title="Click to remove">{t} ×</span>
                       ))}
+                      {r.smart_tags.map((t) => (
+                        <span key={t} className="tag small smart" onClick={async () => { await api.addTag([r.item.id], t); load(); }} title="Suggested · click to keep this tag">+ {t}</span>
+                      ))}
+                      <button className="link" title="Show reference that looks like this" onClick={async () => {
+                        try {
+                          const like = await api.similar(r.item.id);
+                          setSimilar({ of: r, shas: new Set(like.map((i) => i.sha256)) });
+                        } catch (e) { onError(String(e)); }
+                      }}>Similar</button>
                       <button className="link" onClick={() => onOpen(r.item.id)}>Edit</button>
                     </div>
+                    {suggestions.get(r.item.id) && (
+                      <div className="suggest">
+                        <span>Looks like {suggestions.get(r.item.id)!.topic}</span>
+                        <button className="btn small" onClick={() => accept([suggestions.get(r.item.id)!])}>Move</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
