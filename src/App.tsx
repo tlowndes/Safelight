@@ -11,6 +11,9 @@ import Editor from "./views/Editor";
 import Hidden from "./views/Hidden";
 import Screenshots from "./views/Screenshots";
 import ShortcutsDialog from "./components/ShortcutsDialog";
+import { CaptureView } from "./capture/ui/CaptureView";
+import { Toasts as CaptureToasts } from "./capture/ui/Toasts";
+import { useCapture } from "./capture/ui/useCapture";
 import { isTyping } from "./shortcuts";
 
 export default function App() {
@@ -64,6 +67,9 @@ export default function App() {
     }
   }, []);
 
+  // Capture lives at the top so its global shortcuts and the tray work from every screen.
+  const cap = useCapture({ onImported: () => void refresh(), onShow: () => setView("capture") });
+
   useEffect(() => {
     refresh().then((r) => {
       if (r && r.sources.length === 0) setView("sources");
@@ -106,7 +112,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} shotsWaiting={shotsWaiting} onShortcuts={() => setKeysOpen(true)} />
+      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} recording={cap.rec.status} onShortcuts={() => setKeysOpen(true)} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
         {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
@@ -128,9 +134,11 @@ export default function App() {
         {view === "organise" && <Organise onChanged={refresh} onError={setError} onNext={() => setView("cleanup")} />}
         {view === "cleanup" && <Cleanup onChanged={refresh} onError={setError} />}
         {view === "reference" && <Reference onError={setError} onOpen={openEditor} />}
+        {view === "capture" && <CaptureView k={cap} />}
         {view === "edit" && <Editor itemId={editing} groups={groups} onPick={setEditing} onError={setError} onChanged={refresh} />}
       </main>
       {keysOpen && <ShortcutsDialog onClose={() => setKeysOpen(false)} />}
+      <CaptureToasts toasts={cap.toasts} dismiss={cap.dismiss} />
     </div>
   );
 }

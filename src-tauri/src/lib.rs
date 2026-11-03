@@ -506,10 +506,45 @@ async fn view_image(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     .await
 }
 
+// ---------- capture ----------
+
+/// Scans the Captures folder so new screenshots, recordings and exports show up in the library.
+#[tauri::command]
+async fn import_captures(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<ScanReport> {
+    let (db, cache, root) = (state.db_path.clone(), state.cache_dir.clone(), state.captures_root.clone());
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let id = ensure_captures_source(&cat, &root)?;
+        let report = scan_source(&cat, id, |_| {}).map_err(err)?;
+        imaging::process_thumbnails(&cat, &cache, |p| {
+            let _ = app.emit("thumb-progress", p);
+        })
+        .map_err(err)?;
+        let _ = app.emit("captures-imported", report.added);
+        Ok(report)
+    })
+    .await
+}
+
+/// The Captures folder is always a library source, so captures land in the library.
+fn ensure_captures_source(cat: &Catalogue, root: &std::path::Path) -> CmdResult<i64> {
+    let root = root.to_string_lossy();
+    if let Some(s) = cat.sources().map_err(err)?.into_iter().find(|s| s.root == root) {
+        return Ok(s.id);
+    }
+    cat.add_source("Captures", "captures", &root).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // A second launch brings the running Safelight forward (it may be in the tray).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| capture::windows::show_main(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(capture::global_shortcut_plugin())
         .setup(|app| {
             // The catalogue and thumbnails live in the app's own folders, never inside a synced folder.
             let dir = app.path().app_data_dir()?;
@@ -530,6 +565,19 @@ pub fn run() {
             shots::start_watcher(app.handle().clone(), db_path.clone(), shots_default.clone(), shots_known.clone());
             app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the main window keeps Safelight in the tray so capture shortcuts still work
+            // (switch this off in Capture settings).
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && capture::should_hide_on_close(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else if window.label() == "main" {
+                    capture::shutdown(window.app_handle());
+                    window.app_handle().exit(0);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_sources, add_source, remove_source, stats, library, item, scan, process_thumbnails,

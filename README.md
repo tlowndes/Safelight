@@ -16,13 +16,14 @@ One tidy photo and video library from Proton Drive, Google Drive, Google Photos 
 - **Rate, flag, hide:** 1–5 stars, Pick (P) and Reject (X), and Hide (H) to keep photos out of the library without touching the files. Hidden photos are listed under Hidden and can be brought back.
 - **Keyboard:** Lightroom-style shortcuts throughout. Press `?` for the full list (kept in `src/shortcuts.ts`).
 - **Look:** graphite panels, white main buttons, amber only for selection and focus. Follows the Windows light or dark setting.
+- **Capture (from Keepshot):** screenshot or record a screen, window or dragged region, with an optional microphone. Global shortcuts (`Ctrl+Shift+4` region, `Ctrl+Shift+3` screen, `Ctrl+Shift+5` record, `Ctrl+Shift+2` stop, `Ctrl+Shift+P` pause) work from any app, and a tray icon and an always-on-top timer keep Stop in reach. Recordings open in an editor to trim, crop, zoom, add callouts, a cursor highlight and key moments, then export MP4, WebM or a small MP4 with ffmpeg. Copy the image or the file path, or show it in Explorer. Captures are saved to `Pictures\Safelight Captures`, which is a library source, so they land in All photos straight away.
 - **Editor:** light, colour, tone curve, HSL, crop, rotate and presets. Edits are saved separately and originals are never changed; export to JPEG.
 
 Not yet: Google Photos Picker API top-ups, RAW editing, Mac build.
 
 ## Run it on Windows
 
-Needs [Node.js 22](https://nodejs.org) and [Rust](https://rustup.rs) (plus the WebView2 runtime, already on Windows 11).
+Needs [Node.js 22](https://nodejs.org) and [Rust](https://rustup.rs) (plus the WebView2 runtime, already on Windows 11). Capture and video export also need ffmpeg: `winget install Gyan.FFmpeg`. Local transcripts of recordings are optional: `npm run setup:whisper` once.
 
 ```
 npm install
@@ -36,3 +37,5 @@ Or get an installer: **Actions → CI → Run workflow** on your branch, then do
 - `crates/safelight-core`: scanning, dates, hashing, catalogue, folder planning, screenshot rules (`cargo test -p safelight-core`)
 - `src-tauri`: the desktop app shell and the commands the UI calls
 - `src`: React interface
+- `src/capture`: capture and the recording editor. `core` builds every ffmpeg command as pure, tested functions; `services` runs the capture → library → export pipeline; `ui` holds the screens, the recording HUD and the region picker. Tests: `npm test` (needs ffmpeg).
+- `src-tauri/src/capture`: the native side of capture: recorder, tray, global shortcuts, extra windows, clipboard, and the capture store (`captures.sqlite` in the app data folder)
