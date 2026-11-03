@@ -78,7 +78,7 @@ pub fn suggest_events(cat: &Catalogue) -> Result<Vec<EventSuggestion>> {
         .conn
         .prepare(
             "SELECT substr(taken_at, 1, 10) d, COUNT(*) FROM items
-             WHERE taken_at IS NOT NULL AND COALESCE(is_reference, 0) = 0 AND COALESCE(dup_status, '') <> 'drop' AND hidden = 0
+             WHERE taken_at IS NOT NULL AND COALESCE(is_reference, 0) = 0 AND COALESCE(dup_status, '') <> 'drop' AND hidden = 0 AND COALESCE(copy_status, '') <> 'spare'
              GROUP BY d ORDER BY d",
         )?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -122,7 +122,7 @@ pub fn suggest_events(cat: &Catalogue) -> Result<Vec<EventSuggestion>> {
 fn event_contents(cat: &Catalogue, start: &str, end: &str) -> Result<(i64, Vec<String>)> {
     let range = params![format!("{start} 00:00:00"), format!("{end} 23:59:59")];
     let count = cat.conn.query_row(
-        "SELECT COUNT(*) FROM items WHERE taken_at BETWEEN ?1 AND ?2 AND COALESCE(is_reference,0) = 0 AND COALESCE(dup_status,'') <> 'drop' AND hidden = 0",
+        "SELECT COUNT(*) FROM items WHERE taken_at BETWEEN ?1 AND ?2 AND COALESCE(is_reference,0) = 0 AND COALESCE(dup_status,'') <> 'drop' AND hidden = 0 AND COALESCE(copy_status,'') <> 'spare'",
         range,
         |r| r.get(0),
     )?;
@@ -236,33 +236,70 @@ pub fn build_plan(cat: &Catalogue) -> Result<Vec<PlannedFile>> {
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<std::result::Result<_, _>>()?;
 
-    // Pick, per fingerprint, the copy with the best date.
-    let rows: Vec<(i64, String, String, i64, Option<String>, Option<String>, Option<bool>, Option<i64>)> = cat
+    // Per fingerprint, copy from the preferred source (Proton Drive first, Google last), and use
+    // the most trustworthy date found on any copy. Spare copies the user chose not to keep are skipped.
+    struct Row {
+        id: i64,
+        path: String,
+        size: i64,
+        rank: (u8, u8),
+        taken: Option<String>,
+        dsrc: Option<String>,
+        is_ref: bool,
+        topic: Option<i64>,
+    }
+    let rows: Vec<(String, Row)> = cat
         .conn
         .prepare(
-            "SELECT id, sha256, path, size, taken_at, date_source, is_reference, topic_id FROM items
-             WHERE COALESCE(dup_status, '') <> 'drop' AND hidden = 0 ORDER BY sha256, id",
+            "SELECT i.id, i.sha256, i.path, i.size, i.taken_at, i.date_source, i.is_reference, i.topic_id, s.kind,
+                    COALESCE(i.copy_status, '') = 'keep'
+             FROM items i JOIN sources s ON s.id = i.source_id
+             WHERE COALESCE(i.dup_status, '') <> 'drop' AND i.hidden = 0 AND COALESCE(i.copy_status, '') <> 'spare'
+             ORDER BY i.sha256, i.id",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))?
+        .query_map([], |r| {
+            let kind: String = r.get(8)?;
+            let kept: bool = r.get(9)?;
+            Ok((
+                r.get(1)?,
+                Row {
+                    id: r.get(0)?,
+                    path: r.get(2)?,
+                    size: r.get(3)?,
+                    rank: (kept as u8, crate::exact::source_rank(&kind)),
+                    taken: r.get(4)?,
+                    dsrc: r.get(5)?,
+                    is_ref: r.get::<_, Option<bool>>(6)?.unwrap_or(false),
+                    topic: r.get(7)?,
+                },
+            ))
+        })?
         .collect::<std::result::Result<_, _>>()?;
     let mut best: BTreeMap<String, (i64, String, i64, Option<String>, Option<String>, bool, Option<i64>)> = BTreeMap::new();
-    for (id, sha, path, size, taken, dsrc, is_ref, topic) in rows {
-        if managed.iter().any(|m| Path::new(&path).starts_with(m)) {
+    let mut best_rank: HashMap<String, (u8, u8)> = HashMap::new();
+    for (sha, r) in rows {
+        if managed.iter().any(|m| Path::new(&r.path).starts_with(m)) {
             continue;
         }
-        let is_ref = is_ref.unwrap_or(false);
-        let better = match best.get(&sha) {
-            None => true,
-            Some(b) => crate::dupes::date_rank(dsrc.as_deref()) > crate::dupes::date_rank(b.4.as_deref()),
-        };
-        if better {
-            // Reference status sticks if any copy was marked.
-            let was_ref = best.get(&sha).map(|b| b.5).unwrap_or(false);
-            best.insert(sha, (id, path, size, taken, dsrc, is_ref || was_ref, topic));
-        } else if is_ref {
-            if let Some(b) = best.get_mut(&sha) {
-                b.5 = true;
-                b.6 = b.6.or(topic);
+        match best.get_mut(&sha) {
+            None => {
+                best_rank.insert(sha.clone(), r.rank);
+                best.insert(sha, (r.id, r.path, r.size, r.taken, r.dsrc, r.is_ref, r.topic));
+            }
+            Some(b) => {
+                // Reference status sticks if any copy was marked.
+                b.5 |= r.is_ref;
+                b.6 = b.6.or(r.topic);
+                if crate::dupes::date_rank(r.dsrc.as_deref()) > crate::dupes::date_rank(b.4.as_deref()) {
+                    b.3 = r.taken;
+                    b.4 = r.dsrc;
+                }
+                if r.rank > best_rank[&sha] {
+                    best_rank.insert(sha.clone(), r.rank);
+                    b.0 = r.id;
+                    b.1 = r.path;
+                    b.2 = r.size;
+                }
             }
         }
     }
@@ -357,7 +394,7 @@ pub fn plan_summary(cat: &Catalogue) -> Result<PlanSummary> {
 }
 
 /// Copy to `dest` safely: write to a temporary name, check the fingerprint, then rename into place.
-fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<()> {
+pub(crate) fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<()> {
     if dest.exists() {
         if hash::sha256_file(dest)? == sha {
             return Ok(());
@@ -424,11 +461,11 @@ pub fn run_copy(cat: &Catalogue, mut progress: impl FnMut(&CopyProgress)) -> Res
             )?;
             report.copied += 1;
         }
-        if let Some(b) = &backup {
+        if let Some(b) = backup.as_ref().filter(|_| !backup_done) {
             let lib_path: String = cat.conn.query_row("SELECT lib_path FROM copies WHERE sha256 = ?1", [&p.sha256], |r| r.get(0))?;
-            let bdest = PathBuf::from(b).join(&p.dest);
-            match copy_verified(Path::new(&lib_path), &bdest, &p.sha256) {
-                Ok(()) => {
+            let bdest = crate::backup::free_dest(Path::new(b), &p.dest, &p.sha256);
+            match bdest.and_then(|d| copy_verified(Path::new(&lib_path), &d, &p.sha256).map(|_| d)) {
+                Ok(bdest) => {
                     cat.conn.execute(
                         "UPDATE copies SET backup_path = ?2, backup_verified = 1 WHERE sha256 = ?1",
                         params![p.sha256, bdest.to_string_lossy()],

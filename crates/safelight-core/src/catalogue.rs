@@ -48,6 +48,9 @@ pub struct Item {
     pub flag: i64,
     /// Hidden from the library, the timeline and organising. The file is never touched.
     pub hidden: bool,
+    /// Exact-copy decision: None = not reviewed, "keep", or "spare" (a byte-identical copy the
+    /// user chose not to keep; it stays on disk until they move it to the Safelight bin).
+    pub copy_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +71,8 @@ pub struct Stats {
     pub needing_thumbnails: i64,
     pub reference: i64,
     pub hidden: i64,
+    /// Groups of exact copies still waiting for a keep decision.
+    pub exact_to_review: i64,
 }
 
 const SCHEMA: &str = r#"
@@ -118,6 +123,17 @@ CREATE TABLE IF NOT EXISTS copies (
 );
 CREATE TABLE IF NOT EXISTS edits (item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS moves (
+  id INTEGER PRIMARY KEY,
+  batch INTEGER NOT NULL,
+  source_id INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  from_path TEXT NOT NULL,
+  to_path TEXT NOT NULL,
+  at TEXT NOT NULL,
+  undone INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS binned (
   id INTEGER PRIMARY KEY,
   path TEXT NOT NULL,
@@ -142,14 +158,19 @@ const ITEM_COLUMNS: &[(&str, &str)] = &[
     ("rating", "INTEGER NOT NULL DEFAULT 0"),
     ("flag", "INTEGER NOT NULL DEFAULT 0"),
     ("hidden", "INTEGER NOT NULL DEFAULT 0"),
+    ("copy_status", "TEXT"),
 ];
 
 pub(crate) const ITEM_SELECT: &str = "SELECT i.id, i.source_id, i.path, i.kind, i.size, i.sha256, i.taken_at, i.date_source,
     i.width, i.height, i.has_camera, i.thumb, i.dup_status, i.is_reference, i.topic_id,
     EXISTS(SELECT 1 FROM edits e WHERE e.item_id = i.id),
-    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256) > 1,
-    i.rating, i.flag, i.hidden
+    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256 AND COALESCE(j.copy_status, '') <> 'spare') > 1,
+    i.rating, i.flag, i.hidden, i.copy_status
   FROM items i";
+
+/// Items that belong in the library grid: not reference, not a dropped look-alike, not hidden,
+/// and not a spare exact copy the user chose not to keep.
+pub(crate) const IN_LIBRARY: &str = "COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop' AND i.hidden = 0 AND COALESCE(i.copy_status, '') <> 'spare'";
 
 pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -173,6 +194,7 @@ pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
         rating: r.get(17)?,
         flag: r.get(18)?,
         hidden: r.get(19)?,
+        copy_status: r.get(20)?,
     })
 }
 
@@ -191,6 +213,7 @@ impl Catalogue {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(crate::smart::SCHEMA)?;
+        conn.execute_batch(crate::screenshots::SCHEMA)?;
         let existing: Vec<String> = conn
             .prepare("SELECT name FROM pragma_table_info('items')")?
             .query_map([], |r| r.get(0))?
@@ -340,11 +363,13 @@ impl Catalogue {
             },
         )?;
         self.conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(n - 1), 0) FROM (SELECT COUNT(*) n FROM items GROUP BY sha256 HAVING n > 1)",
+            "SELECT COUNT(*), COALESCE(SUM(n - 1), 0), COALESCE(SUM(undecided > 0), 0) FROM (
+               SELECT COUNT(*) n, SUM(copy_status IS NULL) undecided FROM items WHERE hidden = 0 GROUP BY sha256 HAVING n > 1)",
             [],
             |r| {
                 s.exact_duplicate_groups = r.get(0)?;
                 s.exact_duplicate_files = r.get(1)?;
+                s.exact_to_review = r.get(2)?;
                 Ok(())
             },
         )?;
@@ -354,13 +379,23 @@ impl Catalogue {
     /// Newest first, grouped by month. Leaves out confirmed reference images and look-alikes
     /// the user chose not to keep. `limit` caps the number of items returned.
     pub fn library(&self, limit: i64) -> Result<Vec<MonthGroup>> {
+        self.library_in(limit, None)
+    }
+
+    /// Like `library`, but only what's inside one folder (and its subfolders) when `folder` is given.
+    pub fn library_in(&self, limit: i64, folder: Option<&crate::folders::FolderRef>) -> Result<Vec<MonthGroup>> {
+        let (source_id, prefix) = match folder {
+            Some(f) => (f.source_id, crate::folders::prefix(self, f)?),
+            None => (0, String::new()),
+        };
         let mut st = self.conn.prepare(&format!(
             "{ITEM_SELECT}
-             WHERE COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop' AND i.hidden = 0
+             WHERE {IN_LIBRARY}
+               AND (?2 = 0 OR (i.source_id = ?2 AND substr(i.path, 1, length(?3)) = ?3))
              ORDER BY i.taken_at IS NULL, i.taken_at DESC, i.path
              LIMIT ?1"
         ))?;
-        let rows = st.query_map([limit], item_from_row)?;
+        let rows = st.query_map(params![limit, source_id, prefix], item_from_row)?;
         let mut groups: Vec<MonthGroup> = Vec::new();
         for item in rows {
             let item = item?;

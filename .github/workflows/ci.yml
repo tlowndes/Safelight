@@ -51,6 +51,19 @@ jobs:
           SAFELIGHT_MODELS_REQUIRED: "1"
         run: cargo test -p safelight-core --release -- --nocapture clip faces analyse
 
+  capture-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
   windows-build:
     runs-on: windows-latest
     permissions:

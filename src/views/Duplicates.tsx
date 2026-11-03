@@ -1,10 +1,29 @@
 import { useEffect, useState } from "react";
 import { api, dateTimeLabel, DupGroup, fileName, formatBytes, n, Stats } from "../api";
 import Thumb from "../components/Thumb";
+import ExactCopies from "./ExactCopies";
+import { isTyping } from "../shortcuts";
 
 type Props = { stats: Stats | null; onChanged: () => void; onError: (e: string) => void; onNext: () => void };
+type Tab = "exact" | "lookalike";
 
-export default function Duplicates({ stats, onChanged, onError, onNext }: Props) {
+/** Two kinds of duplicate: exact copies (same bytes) and look-alikes (resized or recompressed). */
+export default function Duplicates(props: Props) {
+  const [tab, setTab] = useState<Tab>((props.stats?.exact_to_review ?? 0) > 0 ? "exact" : "lookalike");
+  const tabs = (
+    <div className="seg text" role="tablist" aria-label="Kind of duplicate">
+      <button role="tab" aria-selected={tab === "exact"} className={tab === "exact" ? "on" : ""} onClick={() => setTab("exact")}>
+        Exact copies{props.stats?.exact_to_review ? ` · ${n(props.stats.exact_to_review)}` : ""}
+      </button>
+      <button role="tab" aria-selected={tab === "lookalike"} className={tab === "lookalike" ? "on" : ""} onClick={() => setTab("lookalike")}>Look-alikes</button>
+    </div>
+  );
+  return tab === "exact"
+    ? <ExactCopies tabs={tabs} onChanged={props.onChanged} onError={props.onError} />
+    : <LookAlikes {...props} tabs={tabs} />;
+}
+
+function LookAlikes({ stats, onChanged, onError, onNext, tabs }: Props & { tabs: JSX.Element }) {
   const [groups, setGroups] = useState<DupGroup[] | null>(null);
   const [current, setCurrent] = useState(0);
   const [keep, setKeep] = useState<Set<number>>(new Set());
@@ -49,9 +68,11 @@ export default function Duplicates({ stats, onChanged, onError, onNext }: Props)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === "INPUT") return;
+      if (isTyping(e) || !groups) return;
       if (e.key === "Enter" && keep.size) decide([...keep]);
-      if (e.key === "n") group && decide(group.members.map((m) => m.item.id));
+      else if (e.key === "n" || e.key === "N") group && decide(group.members.map((m) => m.item.id));
+      else if (e.key === "ArrowDown") { e.preventDefault(); setCurrent((c) => Math.min(groups.length - 1, c + 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setCurrent((c) => Math.max(0, c - 1)); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -63,9 +84,8 @@ export default function Duplicates({ stats, onChanged, onError, onNext }: Props)
     <>
       <div className="top">
         <h1>Duplicates</h1>
-        <span className="sub">
-          {n(groups.length)} look-alike groups to check · {n(stats?.exact_duplicate_files ?? 0)} exact copies merged automatically
-        </span>
+        {tabs}
+        <span className="sub">{n(groups.length)} look-alike groups to check</span>
         <div className="row" style={{ marginLeft: "auto" }}>
           {groups.length > 1 && <button className="btn" onClick={keepBestAll}>Keep best in all {n(groups.length)}</button>}
           {group && <button className="btn" onClick={() => decide(group.members.map((m) => m.item.id))}>Not duplicates (N)</button>}
@@ -76,7 +96,7 @@ export default function Duplicates({ stats, onChanged, onError, onNext }: Props)
         <div className="empty">
           <div className="eyebrow">All clear</div>
           <h2>No look-alikes left to check</h2>
-          <p>Exact copies are merged automatically, so only one of each goes into your new library. {stats && stats.needing_thumbnails > 0 && `Still making previews for ${n(stats.needing_thumbnails)} files, so more may appear.`}</p>
+          <p>Only one of each exact copy goes into your new library, taken from Proton Drive where there is one. {stats && stats.needing_thumbnails > 0 && `Still making previews for ${n(stats.needing_thumbnails)} files, so more may appear.`}</p>
           <button className="btn pri" onClick={onNext}>Next: organise →</button>
         </div>
       ) : (
@@ -95,7 +115,7 @@ export default function Duplicates({ stats, onChanged, onError, onNext }: Props)
           {group && (
             <div className="detail">
               <div className="row start"><b className="h3">{fileName(group.members[0].item.path)}</b><span className="muted">{group.members.length} copies look the same · {group.similarity}% visual match</span></div>
-              <p className="muted">Safelight suggests keeping the highest-quality copy and moves the best date onto it. Dropped copies are only binned later, after you approve clean-up. Click a copy to choose which to keep.</p>
+              <p className="muted">Safelight suggests keeping the highest-quality copy (Proton Drive wins a tie) and moves the best date onto it. Dropped copies are only binned later, after you approve clean-up. Click a copy to choose which to keep.</p>
               <div className="compare">
                 {group.members.map((m) => {
                   const on = keep.has(m.item.id);

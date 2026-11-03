@@ -1,7 +1,7 @@
 import Updater from "./Updater";
 import { formatBytes, n, Progress, Source, Stats } from "../api";
 
-export type View = "library" | "people" | "hidden" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "sources";
+export type View = "library" | "people" | "hidden" | "screenshots" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "capture" | "sources";
 
 const icons: Record<string, JSX.Element> = {
   library: <path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4" />,
@@ -11,7 +11,9 @@ const icons: Record<string, JSX.Element> = {
   organise: <path d="M3 6h6l2 2h10v11H3z" />,
   cleanup: <path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14" />,
   reference: <path d="M6 3h12v18l-6-4-6 4z" />,
+  screenshots: <><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><path d="M9 12h6M9 15h4M9 9h6" /></>,
   edit: <><circle cx="12" cy="12" r="3" /><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /></>,
+  capture: <><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 
 /** The Safelight mark: a graphite lens with an amber glow at its centre. */
@@ -31,11 +33,12 @@ export function Logo() {
 }
 
 type Props = {
-  view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null;
+  view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null; shotsWaiting: number;
+  recording: "idle" | "recording" | "paused";
   /** Smart tagging progress, while it runs. */ smart: Progress | null; people: number; onShortcuts: () => void;
 };
 
-export default function Sidebar({ view, onView, sources, stats, thumbs, smart, people, onShortcuts }: Props) {
+export default function Sidebar({ view, onView, sources, stats, thumbs, shotsWaiting, recording, smart, people, onShortcuts }: Props) {
   const nav = (key: View, label: string, badge?: string | number, attn = false) => (
     <button className={`nav ${view === key ? "on" : ""}`} aria-current={view === key ? "page" : undefined} onClick={() => onView(key)}>
       <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[key]}</svg>
@@ -52,9 +55,11 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, smart, p
       {nav("hidden", "Hidden", stats ? n(stats.hidden) : undefined)}
       {nav("reference", "Reference", stats ? n(stats.reference) : undefined)}
       {nav("edit", "Edit")}
+      {nav("capture", "Capture", recording === "recording" ? "Recording" : recording === "paused" ? "Paused" : undefined, recording !== "idle")}
 
       <div className="sect">Needs a look</div>
-      {nav("duplicates", "Duplicates", stats ? n(stats.exact_duplicate_files) : undefined, true)}
+      {nav("screenshots", "Screenshots", shotsWaiting ? n(shotsWaiting) : undefined, true)}
+      {nav("duplicates", "Duplicates", stats ? n(stats.exact_to_review) : undefined, true)}
       {nav("organise", "Organise")}
       {nav("cleanup", "Clean-up")}
 
