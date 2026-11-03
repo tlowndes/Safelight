@@ -1,8 +1,10 @@
+mod capture;
+mod shots;
 mod update;
 
 use base64::Engine;
 use safelight_core::{
-    backup, cleanup, develop::{self, Edits, Preset}, dupes, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
+    backup, cleanup, develop::{self, Edits, Preset}, dupes, exact, folders, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
     ScanReport, Source, Stats,
 };
 use serde::Serialize;
@@ -26,6 +28,11 @@ struct AppState {
     preview: Arc<Mutex<Option<(i64, image::DynamicImage)>>>,
     /// Set while a NAS backup is running, so the weekly timer and the button never overlap.
     backing_up: Arc<AtomicBool>,
+    /// Where screenshots and recordings are saved (a library source).
+    captures_root: PathBuf,
+    /// Where Windows saves screenshots: Pictures\Screenshots.
+    shots_default: String,
+    shots_known: shots::Known,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -73,8 +80,13 @@ async fn stats(state: State<'_, AppState>) -> CmdResult<Stats> {
 }
 
 #[tauri::command]
-async fn library(state: State<'_, AppState>, limit: Option<i64>) -> CmdResult<Vec<MonthGroup>> {
-    with_db!(state, |cat| cat.library(limit.unwrap_or(3000)))
+async fn library(state: State<'_, AppState>, limit: Option<i64>, folder: Option<folders::FolderRef>) -> CmdResult<Vec<MonthGroup>> {
+    with_db!(state, |cat| cat.library_in(limit.unwrap_or(3000), folder.as_ref()))
+}
+
+#[tauri::command]
+async fn folder_tree(state: State<'_, AppState>) -> CmdResult<Vec<folders::FolderNode>> {
+    with_db!(state, |cat| folders::folder_tree(&cat))
 }
 
 #[tauri::command]
@@ -159,6 +171,55 @@ async fn dup_groups(state: State<'_, AppState>) -> CmdResult<Vec<dupes::Group>> 
 #[tauri::command]
 async fn dup_resolve(state: State<'_, AppState>, keep: Vec<i64>, drop: Vec<i64>) -> CmdResult<()> {
     with_db!(state, |cat| dupes::resolve(&cat, &keep, &drop))
+}
+
+#[tauri::command]
+async fn exact_groups(state: State<'_, AppState>) -> CmdResult<Vec<exact::ExactGroup>> {
+    with_db!(state, |cat| exact::exact_groups(&cat))
+}
+
+#[tauri::command]
+async fn exact_resolve(state: State<'_, AppState>, sha256: String, keep: Vec<i64>) -> CmdResult<()> {
+    with_db!(state, |cat| exact::resolve(&cat, &sha256, &keep))
+}
+
+#[tauri::command]
+async fn exact_keep_preferred_all(state: State<'_, AppState>) -> CmdResult<u64> {
+    with_db!(state, |cat| exact::keep_preferred_all(&cat))
+}
+
+#[tauri::command]
+async fn exact_reset(state: State<'_, AppState>, sha256: String) -> CmdResult<()> {
+    with_db!(state, |cat| exact::reset(&cat, &sha256))
+}
+
+#[tauri::command]
+async fn spare_summary(state: State<'_, AppState>) -> CmdResult<exact::SpareSummary> {
+    with_db!(state, |cat| exact::spare_summary(&cat))
+}
+
+#[tauri::command]
+async fn move_spares(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<exact::MoveReport> {
+    with_db!(state, |cat| exact::move_spares(&cat, |done, total| {
+        let _ = app.emit("move-progress", serde_json::json!({ "done": done, "total": total }));
+    }))
+}
+
+#[tauri::command]
+async fn move_batches(state: State<'_, AppState>) -> CmdResult<Vec<exact::MoveBatch>> {
+    with_db!(state, |cat| exact::move_batches(&cat))
+}
+
+/// Put a batch of moved files back, then re-scan their sources so they reappear.
+#[tauri::command]
+async fn undo_moves(state: State<'_, AppState>, batch: i64) -> CmdResult<exact::UndoReport> {
+    with_db!(state, |cat| (|| {
+        let report = exact::undo_batch(&cat, batch)?;
+        for id in &report.source_ids {
+            scan_source(&cat, *id, |_| {})?;
+        }
+        Ok::<_, safelight_core::Error>(report)
+    })())
 }
 
 // ---------- organise ----------
@@ -501,10 +562,45 @@ async fn view_image(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     .await
 }
 
+// ---------- capture ----------
+
+/// Scans the Captures folder so new screenshots, recordings and exports show up in the library.
+#[tauri::command]
+async fn import_captures(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<ScanReport> {
+    let (db, cache, root) = (state.db_path.clone(), state.cache_dir.clone(), state.captures_root.clone());
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let id = ensure_captures_source(&cat, &root)?;
+        let report = scan_source(&cat, id, |_| {}).map_err(err)?;
+        imaging::process_thumbnails(&cat, &cache, |p| {
+            let _ = app.emit("thumb-progress", p);
+        })
+        .map_err(err)?;
+        let _ = app.emit("captures-imported", report.added);
+        Ok(report)
+    })
+    .await
+}
+
+/// The Captures folder is always a library source, so captures land in the library.
+fn ensure_captures_source(cat: &Catalogue, root: &std::path::Path) -> CmdResult<i64> {
+    let root = root.to_string_lossy();
+    if let Some(s) = cat.sources().map_err(err)?.into_iter().find(|s| s.root == root) {
+        return Ok(s.id);
+    }
+    cat.add_source("Captures", "captures", &root).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // A second launch brings the running Safelight forward (it may be in the tray).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| capture::windows::show_main(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(capture::global_shortcut_plugin())
         .setup(|app| {
             // The catalogue and thumbnails live in the app's own folders, never inside a synced folder.
             let dir = app.path().app_data_dir()?;
@@ -514,20 +610,57 @@ pub fn run() {
             let db_path = dir.join("catalogue.sqlite");
             let cat = Catalogue::open(&db_path)?;
             cat.set_setting("thumb_cache", &cache_dir.to_string_lossy())?;
+            let captures_root = capture::init(app.handle())?;
+            ensure_captures_source(&cat, &captures_root)?;
+            let shots_default = app
+                .path()
+                .picture_dir()
+                .map(|p| p.join("Screenshots"))
+                .unwrap_or_else(|_| PathBuf::from("Screenshots"))
+                .to_string_lossy()
+                .into_owned();
+            let shots_known = shots::Known::default();
+            shots::start_watcher(app.handle().clone(), db_path.clone(), shots_default.clone(), shots_known.clone());
             let backing_up = Arc::new(AtomicBool::new(false));
             start_backup_timer(app.handle().clone(), db_path.clone(), backing_up.clone());
-            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), backing_up });
+            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known, captures_root, backing_up });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the main window keeps Safelight in the tray so capture shortcuts still work
+            // (switch this off in Capture settings).
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && capture::should_hide_on_close(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else if window.label() == "main" {
+                    capture::shutdown(window.app_handle());
+                    window.app_handle().exit(0);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_sources, add_source, remove_source, stats, library, item, scan, process_thumbnails,
             get_settings, set_setting,
-            dup_groups, dup_resolve,
+            dup_groups, dup_resolve, folder_tree,
+            exact_groups, exact_resolve, exact_keep_preferred_all, exact_reset, spare_summary, move_spares, move_batches, undo_moves,
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy, backup_status, run_backup,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
-            set_rating, set_flag, set_hidden, hidden_items, view_image
+            set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
+            capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
+            capture::reveal_in_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
+            capture::db::capture_db_execute, capture::db::capture_db_select,
+            capture::tools::run_tool, capture::tools::tool_available,
+            capture::files::fs_exists, capture::files::fs_mkdirp, capture::files::fs_read_text, capture::files::fs_write_text,
+            capture::files::fs_remove, capture::files::fs_remove_dir, capture::files::fs_trash, capture::files::fs_size, capture::files::fs_list,
+            capture::files::data_size, capture::platform::list_windows,
+            capture::windows::open_region_picker, capture::windows::flash_screen,
+            capture::recorder::rec_start, capture::recorder::rec_toggle_pause, capture::recorder::rec_stop, capture::recorder::rec_status,
+            capture::hotkeys::set_hotkeys,
+            shots::shot_info, shots::shot_set, shots::shot_set_api_key, shots::shot_queue, shots::shot_file,
+            shots::shot_leave, shots::shot_undo, shots::shot_moves, shots::shot_sort_existing, shots::shot_reread
         ])
         .run(tauri::generate_context!())
         .expect("error while running Safelight");

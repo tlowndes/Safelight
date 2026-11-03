@@ -17,6 +17,8 @@ pub const LOOKALIKE_THRESHOLD: u32 = 6;
 pub struct Member {
     pub item: Item,
     pub source_name: String,
+    /// "proton", "gdrive", "takeout", "nas" or "local".
+    pub source_kind: String,
     /// How many byte-identical copies of this file exist across sources.
     pub copies: i64,
 }
@@ -69,7 +71,7 @@ pub fn lookalike_groups(cat: &Catalogue) -> Result<Vec<Group>> {
     let items: Vec<Item> = cat
         .conn
         .prepare(&format!(
-            "{ITEM_SELECT} WHERE i.phash IS NOT NULL AND i.hidden = 0 AND i.id IN (SELECT MIN(id) FROM items GROUP BY sha256)"
+            "{ITEM_SELECT} WHERE i.phash IS NOT NULL AND i.hidden = 0 AND i.id IN (SELECT MIN(id) FROM items WHERE COALESCE(copy_status, '') <> 'spare' GROUP BY sha256)"
         ))?
         .query_map([], item_from_row)?
         .collect::<std::result::Result<_, _>>()?;
@@ -117,7 +119,7 @@ pub fn lookalike_groups(cat: &Catalogue) -> Result<Vec<Group>> {
         buckets.entry(r).or_default().push(i);
     }
 
-    let source_names: HashMap<i64, String> = cat.sources()?.into_iter().map(|s| (s.id, s.name)).collect();
+    let sources: HashMap<i64, (String, String)> = cat.sources()?.into_iter().map(|s| (s.id, (s.name, s.kind))).collect();
     let mut copies_st = cat.conn.prepare("SELECT COUNT(*) FROM items WHERE sha256 = ?1")?;
     let mut groups = Vec::new();
     for idxs in buckets.into_values().filter(|v| v.len() > 1) {
@@ -136,12 +138,15 @@ pub fn lookalike_groups(cat: &Catalogue) -> Result<Vec<Group>> {
             .map(|&i| {
                 Ok(Member {
                     item: items[i].clone(),
-                    source_name: source_names.get(&items[i].source_id).cloned().unwrap_or_default(),
+                    source_name: sources.get(&items[i].source_id).map(|s| s.0.clone()).unwrap_or_default(),
+                    source_kind: sources.get(&items[i].source_id).map(|s| s.1.clone()).unwrap_or_default(),
                     copies: copies_st.query_row([&items[i].sha256], |r| r.get(0))?,
                 })
             })
             .collect::<Result<_>>()?;
-        members.sort_by(|a, b| quality_score(&b.item).cmp(&quality_score(&a.item)));
+        // Best quality first; when two are equally good, the Proton Drive copy wins over Google.
+        let rank = |m: &Member| (quality_score(&m.item), crate::exact::source_rank(&m.source_kind));
+        members.sort_by(|a, b| rank(b).cmp(&rank(a)));
         let key = members.iter().map(|m| m.item.sha256.clone()).min().unwrap_or_default();
         groups.push(Group { key, members, best: 0, similarity: 100 - worst * 100 / 64 });
     }

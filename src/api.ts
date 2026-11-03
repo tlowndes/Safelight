@@ -8,15 +8,26 @@ export type Item = {
   has_camera: boolean; thumb: string | null; dup_status: string | null; is_reference: boolean | null;
   topic_id: number | null; edited: boolean; has_exact_duplicate: boolean;
   /** 0 = unrated, 1-5 stars */ rating: number; /** 1 pick, -1 reject, 0 none */ flag: number; hidden: boolean;
+  /** Exact-copy decision: null = not reviewed */ copy_status: "keep" | "spare" | null;
 };
 export type MonthGroup = { month: string; items: Item[] };
 export type Stats = {
   photos: number; videos: number; total_bytes: number; exact_duplicate_files: number;
   exact_duplicate_groups: number; needing_thumbnails: number; reference: number; hidden: number;
+  /** Exact-copy groups still waiting for a keep decision */ exact_to_review: number;
 };
 export type Progress = { done: number; total: number; current?: string; stage?: string; source_id?: number };
 export type ScanReport = { found: number; added: number; updated: number; unchanged: number; removed: number; errors: string[] };
-export type DupMember = { item: Item; source_name: string; copies: number };
+export type DupMember = { item: Item; source_name: string; source_kind: string; copies: number };
+export type ExactCopy = { item: Item; source_name: string; source_kind: string; keep: boolean };
+export type ExactGroup = { sha256: string; copies: ExactCopy[]; decided: boolean };
+export type SpareSummary = { files: number; bytes: number; sources: { source_id: number; name: string; kind: string; files: number; bytes: number }[] };
+export type MoveReport = { batch: number; moved: number; bytes: number; skipped: number; errors: string[] };
+export type MoveBatch = { batch: number; at: string; files: number; bytes: number; undone: number };
+export type UndoReport = { restored: number; errors: string[]; source_ids: number[] };
+/** A folder inside a source; path is relative to the source root with "/" between parts, "" for the root. */
+export type FolderRef = { source_id: number; path: string };
+export type FolderNode = FolderRef & { name: string; depth: number; count: number };
 export type DupGroup = { key: string; members: DupMember[]; best: number; similarity: number };
 export type EventSuggestion = { id: number | null; name: string; start_day: string; end_day: string; count: number; sample_thumbs: string[] };
 export type PlanSummary = {
@@ -44,6 +55,18 @@ export type BackupStatus = {
   backup_root: string | null; weekly: boolean; reachable: boolean; last_run: string | null; next_due: string | null;
   due: boolean; waiting: number; waiting_bytes: number; last_report: BackupReport | null;
 };
+export type ShotSuggestion = {
+  path: string; category: string; app: string | null; title: string; confidence: number; engine: "device" | "claude";
+  date: string; description: string; new_name: string; note: string | null; text: string; found: string;
+};
+export type ShotMove = { id: number; at: string; from: string; to: string; category: string; name: string; engine: string; confidence: number; auto: boolean; undone: boolean };
+export type ShotSettings = {
+  folder: string; destination: string; watch: boolean; reader: "device" | "claude"; claude_model: "best" | "cheapest";
+  has_api_key: boolean; auto_file: boolean; sureness: "careful" | "balanced" | "relaxed"; date_prefix: boolean;
+};
+export type ShotCategory = { id: string; label: string; folder: string };
+export type ShotInfo = { settings: ShotSettings; categories: ShotCategory[]; ocr: boolean; waiting: number };
+export type ShotSettingKey = "folder" | "destination" | "watch" | "reader" | "claude_model" | "auto_file" | "sureness" | "date_prefix";
 export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean };
 
 export const defaultEdits = (): Edits => ({
@@ -58,7 +81,8 @@ export const api = {
   addSource: (name: string, kind: string, root: string) => invoke<number>("add_source", { name, kind, root }),
   removeSource: (id: number) => invoke<void>("remove_source", { id }),
   stats: () => invoke<Stats>("stats"),
-  library: (limit = 3000) => invoke<MonthGroup[]>("library", { limit }),
+  library: (limit = 3000, folder: FolderRef | null = null) => invoke<MonthGroup[]>("library", { limit, folder }),
+  folderTree: () => invoke<FolderNode[]>("folder_tree"),
   item: (id: number) => invoke<Item | null>("item", { id }),
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
@@ -67,6 +91,15 @@ export const api = {
 
   dupGroups: () => invoke<DupGroup[]>("dup_groups"),
   dupResolve: (keep: number[], drop: number[]) => invoke<void>("dup_resolve", { keep, drop }),
+  exactGroups: () => invoke<ExactGroup[]>("exact_groups"),
+  exactResolve: (sha256: string, keep: number[]) => invoke<void>("exact_resolve", { sha256, keep }),
+  exactKeepPreferredAll: () => invoke<number>("exact_keep_preferred_all"),
+  exactReset: (sha256: string) => invoke<void>("exact_reset", { sha256 }),
+  spareSummary: () => invoke<SpareSummary>("spare_summary"),
+  moveSpares: () => invoke<MoveReport>("move_spares"),
+  moveBatches: () => invoke<MoveBatch[]>("move_batches"),
+  undoMoves: (batch: number) => invoke<UndoReport>("undo_moves", { batch }),
+  onMoveProgress: (cb: (p: Progress) => void) => on("move-progress", cb),
 
   suggestEvents: () => invoke<EventSuggestion[]>("suggest_events"),
   saveEvent: (name: string, startDay: string, endDay: string) => invoke<number>("save_event", { name, startDay, endDay }),
@@ -111,6 +144,20 @@ export const api = {
   setHidden: (ids: number[], hidden: boolean) => invoke<void>("set_hidden", { ids, hidden }),
   hiddenItems: () => invoke<Item[]>("hidden_items"),
   viewImage: (id: number) => invoke<string>("view_image", { id }),
+
+  shotInfo: () => invoke<ShotInfo>("shot_info"),
+  shotSet: (key: ShotSettingKey, value: string) => invoke<void>("shot_set", { key, value }),
+  shotSetApiKey: (apiKey: string) => invoke<void>("shot_set_api_key", { apiKey }),
+  shotQueue: () => invoke<ShotSuggestion[]>("shot_queue"),
+  shotFile: (path: string, edits: { category?: string; description?: string }) => invoke<ShotMove>("shot_file", { path, edits }),
+  shotLeave: (path: string) => invoke<void>("shot_leave", { path }),
+  shotUndo: (id: number) => invoke<string>("shot_undo", { id }),
+  shotMoves: (query: string | null, limit = 300) => invoke<ShotMove[]>("shot_moves", { query, limit }),
+  shotSortExisting: () => invoke<number>("shot_sort_existing"),
+  shotReread: (path: string, engine: "device" | "claude") => invoke<ShotSuggestion>("shot_reread", { path, engine }),
+  onShotFiled: (cb: (m: ShotMove) => void) => on("shot-filed", cb),
+  onShotQueued: (cb: (s: ShotSuggestion) => void) => on("shot-queued", cb),
+  onShotsProgress: (cb: (p: Progress) => void) => on("shots-progress", cb),
 
   onScanProgress: (cb: (p: Progress) => void) => on("scan-progress", cb),
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),
@@ -171,3 +218,6 @@ export function formatBytes(n: number) {
 }
 
 export const n = (v: number) => v.toLocaleString("en-GB");
+
+/** Plain names for source kinds, as the Sources screen shows them. */
+export const KIND_NAMES: Record<string, string> = { proton: "Proton Drive", gdrive: "Google Drive", takeout: "Google Photos", nas: "NAS", local: "Folder" };

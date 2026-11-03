@@ -37,8 +37,15 @@ pub fn classify(path: &Path) -> Option<Kind> {
     }
 }
 
-/// Files and folders we never want to pick up (sync clutter, thumbnails, system files).
+/// Files and folders we never want to pick up (sync clutter, thumbnails, system files, and
+/// the working files capture keeps beside a recording: its poster frames and the segments of a
+/// recording still in progress).
 pub fn is_ignored(path: &Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if name == "poster.jpg" || name.ends_with(".poster.jpg") || (name.starts_with("segment-") && name.ends_with(".mkv")) {
+            return true;
+        }
+    }
     path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy();
         s.starts_with('.')
@@ -46,6 +53,8 @@ pub fn is_ignored(path: &Path) -> bool {
             || s.eq_ignore_ascii_case("#recycle")
             || s.eq_ignore_ascii_case("$RECYCLE.BIN")
             || s.eq_ignore_ascii_case("Thumbs.db")
+            // Where Safelight puts spare copies and cleaned-up files; never re-import them.
+            || s.eq_ignore_ascii_case("Safelight bin")
     })
 }
 
@@ -63,6 +72,11 @@ mod tests {
     fn ignores_clutter() {
         assert!(is_ignored(Path::new("photos/@eaDir/x.jpg")));
         assert!(is_ignored(Path::new("photos/.trash/x.jpg")));
+        assert!(is_ignored(Path::new("Safelight bin/2026-11-03/x.jpg")));
         assert!(!is_ignored(Path::new("photos/2024/x.jpg")));
+        assert!(is_ignored(Path::new("Recordings/2026-11-03 17-00-00/poster.jpg")));
+        assert!(is_ignored(Path::new("Recordings/2026-11-03 17-00-00/segment-001.mkv")));
+        assert!(is_ignored(Path::new("Exports/demo/demo.poster.jpg")));
+        assert!(!is_ignored(Path::new("Exports/demo/demo.mp4")));
     }
 }
