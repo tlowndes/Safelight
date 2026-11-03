@@ -29,15 +29,15 @@ pub const MODELS: &[ModelFile] = &[
     ModelFile {
         file: "clip-vision.onnx",
         purpose: "Understands what's in a picture",
-        url: concat!("https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main", "/onnx/vision_model_quantized.onnx"),
-        size_mb: 88,
+        url: concat!("https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main", "/onnx/vision_model.onnx"),
+        size_mb: 352,
         sha256: None,
     },
     ModelFile {
         file: "clip-text.onnx",
         purpose: "Matches your search words to pictures",
-        url: concat!("https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main", "/onnx/text_model_quantized.onnx"),
-        size_mb: 64,
+        url: concat!("https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main", "/onnx/text_model.onnx"),
+        size_mb: 254,
         sha256: None,
     },
     ModelFile {
