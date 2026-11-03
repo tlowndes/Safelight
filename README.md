@@ -9,6 +9,7 @@ One tidy photo and video library from Proton Drive, Google Drive, Google Photos 
 - **Sources:** scan Proton Drive, Google Drive, a Google Photos Takeout folder and the NAS as folders. Dates come from camera data (EXIF), Takeout JSON, file names, then modified time.
 - **Duplicates:** exact copies (SHA-256) merge automatically; look-alikes (visual fingerprint) go to a review screen that suggests the best-quality copy.
 - **Organise:** suggests events from busy days, previews the new `Photos/YYYY/YYYY-MM Event/` structure, then copies to the library and the backup mirror, checking every file.
+- **NAS backup:** once a week Safelight copies anything new or changed to a NAS folder (a network path like `\\NAS\Photos` works), checking every copy against its SHA-256 fingerprint. Copy only: nothing on the NAS is deleted or overwritten, and an edited original is kept alongside the older version. If the NAS is offline it tries again every hour. There is also a Back up now button.
 - **Clean-up:** once copies are verified, moves originals to each source's Recycle Bin (or a `Safelight bin` folder on network drives). Nothing goes without your OK.
 - **Reference:** screenshots and saved images are kept apart in topics with tags.
 - **Viewer:** full-screen loupe with glass overlays and a filmstrip. The mouse wheel moves to the next photo, Ctrl + wheel zooms at the cursor, double-click toggles fit and 100%.

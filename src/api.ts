@@ -39,6 +39,11 @@ export type Edits = {
 };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
+export type BackupReport = { backed_up: number; skipped: number; errors: string[]; finished_at: string; automatic: boolean };
+export type BackupStatus = {
+  backup_root: string | null; weekly: boolean; reachable: boolean; last_run: string | null; next_due: string | null;
+  due: boolean; waiting: number; waiting_bytes: number; last_report: BackupReport | null;
+};
 export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean };
 
 export const defaultEdits = (): Edits => ({
@@ -58,7 +63,7 @@ export const api = {
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
   settings: () => invoke<Settings>("get_settings"),
-  setSetting: (key: "library_root" | "backup_root" | "auto_reference", value: string) => invoke<void>("set_setting", { key, value }),
+  setSetting: (key: "library_root" | "backup_root" | "auto_reference" | "auto_backup", value: string) => invoke<void>("set_setting", { key, value }),
 
   dupGroups: () => invoke<DupGroup[]>("dup_groups"),
   dupResolve: (keep: number[], drop: number[]) => invoke<void>("dup_resolve", { keep, drop }),
@@ -70,6 +75,8 @@ export const api = {
   setReference: (ids: number[], isReference: boolean) => invoke<void>("set_reference", { ids, isReference }),
   planSummary: () => invoke<PlanSummary>("plan_summary"),
   runCopy: () => invoke<CopyReport>("run_copy"),
+  backupStatus: () => invoke<BackupStatus>("backup_status"),
+  runBackup: () => invoke<BackupReport>("run_backup"),
 
   cleanupSummary: () => invoke<CleanupSummary>("cleanup_summary"),
   cleanupFiles: (sourceIds: number[]) => invoke<string[]>("cleanup_files", { sourceIds }),
@@ -108,6 +115,9 @@ export const api = {
   onScanProgress: (cb: (p: Progress) => void) => on("scan-progress", cb),
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),
   onCopyProgress: (cb: (p: Progress) => void) => on("copy-progress", cb),
+  onBackupProgress: (cb: (p: Progress) => void) => on("backup-progress", cb),
+  /** Fires after every backup, including the weekly one: `{ Ok: report }` or `{ Err: message }`. */
+  onBackupFinished: (cb: (r: { Ok?: BackupReport; Err?: string }) => void) => on("backup-finished", cb),
   onCleanupProgress: (cb: (p: Progress) => void) => on("cleanup-progress", cb),
   onReferenceMoved: (cb: (n: number) => void) => on("reference-moved", cb),
   onDeleteProgress: (cb: (p: Progress) => void) => on("delete-progress", cb),
@@ -141,6 +151,16 @@ export function dateTimeLabel(t: string | null) {
   if (!t) return "No date";
   const d = new Date(t.replace(" ", "T"));
   return d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** "3 days ago", "in 2 days", "today" for a UTC "YYYY-MM-DD HH:MM:SS" time. */
+export function relDay(utc: string) {
+  const t = new Date(utc.replace(" ", "T") + "Z").getTime();
+  const days = Math.round((t - Date.now()) / 86400000);
+  if (days === 0) return "today";
+  if (days === -1) return "yesterday";
+  if (days === 1) return "tomorrow";
+  return days < 0 ? `${-days} days ago` : `in ${days} days`;
 }
 
 export function formatBytes(n: number) {

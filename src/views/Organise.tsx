@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, CopyReport, dayLabel, EventSuggestion, fileUrl, formatBytes, Item, n, PlanSummary, Progress } from "../api";
+import BackupPanel from "../components/BackupPanel";
 import ProgressBar from "../components/ProgressBar";
 import Thumb from "../components/Thumb";
 
@@ -34,7 +35,7 @@ export default function Organise({ onChanged, onError, onNext }: Props) {
     return () => { un.then((f) => f()); };
   }, []);
 
-  const chooseFolder = async (key: "library_root" | "backup_root", title: string) => {
+  const chooseFolder = async (key: "library_root", title: string) => {
     const dir = await open({ directory: true, title });
     if (typeof dir !== "string") return;
     await api.setSetting(key, dir);
@@ -82,10 +83,8 @@ export default function Organise({ onChanged, onError, onNext }: Props) {
           <button className="folder-pick" onClick={() => chooseFolder("library_root", "Choose where the library lives (e.g. a folder in Proton Drive)")}>
             {plan.library_root ?? "Choose a folder in Proton Drive…"}
           </button>
-          <div className="label">Backup mirror</div>
-          <button className="folder-pick" onClick={() => chooseFolder("backup_root", "Choose the backup folder (e.g. on the NAS)")}>
-            {plan.backup_root ?? "Choose a folder on the NAS…"}
-          </button>
+          <div className="label">NAS backup</div>
+          <BackupPanel onError={onError} />
           <div className="label">New structure</div>
           {plan.tree.filter((t) => depth(t.path) < 3).slice(0, 400).map((t) => (
             <div key={t.path} className={`tree-row ${t.path.includes(" ") && depth(t.path) === 2 ? "amber" : ""}`} style={{ paddingLeft: depth(t.path) * 16 }}>
