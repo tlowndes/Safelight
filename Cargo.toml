@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/safelight-core", "src-tauri"]
+
+# The smart tagging models are far too slow unoptimised, so dependencies are always optimised,
+# even in dev builds.
+[profile.dev.package."*"]
+opt-level = 3

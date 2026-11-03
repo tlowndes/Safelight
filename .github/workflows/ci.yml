@@ -20,6 +20,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p safelight-core
 
+  # Smart tagging with the real models: the same files the app downloads on first use.
+  smart-tagging-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: models
+          key: smart-models-v1
+      - name: Download models and test pictures
+        run: |
+          mkdir -p models && cd models
+          get() { [ -s "$1" ] || curl -fsSL --retry 3 -o "$1" "$2"; }
+          HF=https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main
+          get clip-vision.onnx $HF/onnx/vision_model_quantized.onnx
+          get clip-text.onnx $HF/onnx/text_model_quantized.onnx
+          get clip-tokenizer.json $HF/tokenizer.json
+          get face-detect.onnx https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          get face-recognise.onnx https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+          get test-face-a.jpg https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/lena.jpg
+          get test-face-b.jpg https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/messi5.jpg
+          cp test-face-b.jpg test-football.jpg
+          ls -la
+      - name: Run model tests
+        env:
+          SAFELIGHT_MODELS: ${{ github.workspace }}/models
+          SAFELIGHT_MODELS_REQUIRED: "1"
+        run: cargo test -p safelight-core --release -- --nocapture clip faces analyse
+
   windows-build:
     runs-on: windows-latest
     permissions:

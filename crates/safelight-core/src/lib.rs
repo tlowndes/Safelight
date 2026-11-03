@@ -1,7 +1,9 @@
 //! Safelight core: scanning sources, reading capture dates, fingerprinting files, finding
-//! duplicates, planning and copying the organised library, clean-up, reference and editing.
+//! duplicates, planning and copying the organised library, clean-up, reference, editing and
+//! on-device smart tagging (faces, places, scenes).
 //! No UI code lives here, so it can be tested on any platform.
 
+pub mod ai;
 pub mod catalogue;
 pub mod cleanup;
 pub mod dates;
@@ -15,6 +17,7 @@ pub mod organise;
 pub mod plan;
 pub mod reference;
 pub mod scan;
+pub mod smart;
 #[cfg(windows)]
 pub mod winshell;
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, dateTimeLabel, fileExt, fileName, fileUrl, formatBytes, isViewable, Item, n, thumbUrl } from "../api";
+import { api, dateTimeLabel, fileExt, fileName, fileUrl, formatBytes, isViewable, Item, ItemSmart, n, thumbUrl } from "../api";
 import { isTyping } from "../shortcuts";
 
 type Props = {
@@ -12,6 +12,10 @@ type Props = {
   onFlag: (id: number, flag: number) => void;
   onHide: (id: number) => void;
   sourceName: (id: number) => string;
+  /** Show photos that look like this one (when smart tagging is on). */
+  onSimilar?: (item: Item) => void;
+  /** Search the library for a person, place or tag. */
+  onSearch?: (q: string) => void;
 };
 
 /** Scale and top-left offset of the picture inside the stage. `fit` = scaled to fit. */
@@ -20,7 +24,7 @@ type View = { s: number; x: number; y: number; fit: boolean };
 const MAX_ZOOM = 8;
 const DATE_FROM: Record<string, string> = { exif: "from camera data", takeout: "from Google Takeout", filename: "from the file name", mtime: "from the file's modified time" };
 
-export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, sourceName }: Props) {
+export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, sourceName, onSimilar, onSearch }: Props) {
   const item = items[index];
   const stage = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLImageElement & HTMLVideoElement>(null);
@@ -33,6 +37,15 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const wheel = useRef({ acc: 0, last: 0 });
+  const [smart, setSmart] = useState<ItemSmart | null>(null);
+
+  useEffect(() => {
+    if (!item) return;
+    let live = true;
+    setSmart(null);
+    api.itemSmart(item.id).then((s) => live && setSmart(s)).catch(() => {});
+    return () => { live = false; };
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pick the best picture: the original when the webview can show it, otherwise a cached
   // full-screen JPEG made by the Rust side (HEIC, RAW, TIFF). Show the thumbnail meanwhile.
@@ -253,6 +266,23 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
             <dt>Folder</dt><dd>{item.path.slice(0, Math.max(0, item.path.length - fileName(item.path).length - 1))}</dd>
             <dt>Fingerprint</dt><dd className="mono-text" title={item.sha256}>{item.sha256.slice(0, 8)}…{item.sha256.slice(-8)}</dd>
           </dl>
+          {smart && (smart.people.length > 0 || smart.faces > 0 || smart.place || smart.tags.length > 0 || onSimilar) && (
+            <div className="smart-facts" aria-label="Found by smart tagging">
+              {(smart.people.length > 0 || smart.faces > 0) && (
+                <div><div className="label">People</div><div className="tag-cloud">
+                  {smart.people.map((p) => <button key={p} className="tag" onClick={() => onSearch?.(p)}>{p}</button>)}
+                  {smart.faces > smart.people.length && <span className="muted small">{smart.people.length ? "+ " : ""}{n(smart.faces - smart.people.length)} unnamed</span>}
+                </div></div>
+              )}
+              {smart.place && <div><div className="label">Place</div><div className="tag-cloud"><button className="tag" onClick={() => onSearch?.(smart.place!.split(",")[0])}>{smart.place}</button></div></div>}
+              {smart.tags.length > 0 && (
+                <div><div className="label">Tags</div><div className="tag-cloud">
+                  {smart.tags.map((t) => <button key={t} className="tag smart" onClick={() => onSearch?.(t)}>{t}</button>)}
+                </div></div>
+              )}
+              {onSimilar && <div className="row start"><button className="btn small" onClick={() => onSimilar(item)}>Find similar photos</button></div>}
+            </div>
+          )}
           {item.has_exact_duplicate && (
             <div className="copy-note">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></svg>

@@ -1,10 +1,11 @@
 import Updater from "./Updater";
 import { formatBytes, n, Progress, Source, Stats } from "../api";
 
-export type View = "library" | "hidden" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "sources";
+export type View = "library" | "people" | "hidden" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "sources";
 
 const icons: Record<string, JSX.Element> = {
   library: <path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4" />,
+  people: <><circle cx="9" cy="8" r="3.2" /><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5M16 5.2a3 3 0 0 1 0 5.6M17.5 14.2c1.9.6 3.1 2.2 3.5 4.8" /></>,
   hidden: <path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-3 4.1M6.6 6.6A13 13 0 0 0 2 12c1 2.5 5 7 10 7a9.8 9.8 0 0 0 4.4-1" />,
   duplicates: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>,
   organise: <path d="M3 6h6l2 2h10v11H3z" />,
@@ -29,9 +30,12 @@ export function Logo() {
   );
 }
 
-type Props = { view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null; onShortcuts: () => void };
+type Props = {
+  view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null;
+  /** Smart tagging progress, while it runs. */ smart: Progress | null; people: number; onShortcuts: () => void;
+};
 
-export default function Sidebar({ view, onView, sources, stats, thumbs, onShortcuts }: Props) {
+export default function Sidebar({ view, onView, sources, stats, thumbs, smart, people, onShortcuts }: Props) {
   const nav = (key: View, label: string, badge?: string | number, attn = false) => (
     <button className={`nav ${view === key ? "on" : ""}`} aria-current={view === key ? "page" : undefined} onClick={() => onView(key)}>
       <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[key]}</svg>
@@ -44,6 +48,7 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, onShortc
     <aside className="side" aria-label="Sidebar">
       <div className="logo"><Logo />Safelight</div>
       {nav("library", "All photos", shown !== undefined ? n(shown) : undefined)}
+      {nav("people", "People & places", people ? n(people) : undefined)}
       {nav("hidden", "Hidden", stats ? n(stats.hidden) : undefined)}
       {nav("reference", "Reference", stats ? n(stats.reference) : undefined)}
       {nav("edit", "Edit")}
@@ -70,6 +75,12 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, onShortc
               <b>Making previews</b>
               <div className="bar"><b style={{ width: `${(thumbs.done / thumbs.total) * 100}%` }} /></div>
               <p>{n(thumbs.done)} of {n(thumbs.total)}</p>
+            </>
+          ) : smart && smart.total > 0 ? (
+            <>
+              <b>Tagging photos</b>
+              <div className="bar"><b style={{ width: `${(smart.done / smart.total) * 100}%` }} /></div>
+              <p>{n(smart.done)} of {n(smart.total)} · on this PC</p>
             </>
           ) : (
             <p>{n(stats.photos)} photos and {n(stats.videos)} videos · {formatBytes(stats.total_bytes)} across {sources.length} source{sources.length === 1 ? "" : "s"}.</p>
