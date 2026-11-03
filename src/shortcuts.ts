@@ -61,6 +61,22 @@ export const SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    name: "Capture",
+    items: [
+      { does: "Screenshot a region", keys: ["Ctrl", "Shift", "4"], where: "Any app" },
+      { does: "Screenshot the screen under the pointer", keys: ["Ctrl", "Shift", "3"], where: "Any app" },
+      { does: "Start or stop recording", keys: ["Ctrl", "Shift", "5"], where: "Any app" },
+      { does: "Stop recording", keys: ["Ctrl", "Shift", "2"], where: "Any app" },
+      { does: "Pause or resume recording", keys: ["Ctrl", "Shift", "P"], where: "Any app" },
+      { does: "Confirm or cancel a region", keys: ["Enter", "/", "Esc"], where: "Region picker" },
+      { does: "Play or pause", keys: ["Space"], where: "Recording editor" },
+      { does: "Step a frame (a second with Shift)", keys: ["←", "/", "→"], where: "Recording editor" },
+      { does: "Add a key moment", keys: ["M"], where: "Recording editor" },
+      { does: "Delete the selected zoom, callout or moment", keys: ["Delete"], where: "Recording editor" },
+      { does: "Undo / redo", keys: ["Ctrl", "Z", "/", "Ctrl", "Y"], where: "Recording editor" },
+    ],
+  },
+  {
     name: "General",
     items: [
       { does: "Search", keys: ["Ctrl", "K"] },

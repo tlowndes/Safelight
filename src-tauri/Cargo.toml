@@ -13,10 +13,21 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 safelight-core = { path = "../crates/safelight-core" }
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+dotenvy = "0.15"
+trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 base64 = "0.22"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm"] }
