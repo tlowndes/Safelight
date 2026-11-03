@@ -212,6 +212,7 @@ impl Catalogue {
         conn.busy_timeout(Duration::from_secs(30))?;
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(crate::screenshots::SCHEMA)?;
         let existing: Vec<String> = conn
             .prepare("SELECT name FROM pragma_table_info('items')")?
             .query_map([], |r| r.get(0))?
