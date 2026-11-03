@@ -9,6 +9,8 @@ pub mod dates;
 pub mod delete;
 pub mod develop;
 pub mod dupes;
+pub mod exact;
+pub mod folders;
 pub mod hash;
 pub mod imaging;
 pub mod media;

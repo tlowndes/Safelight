@@ -46,6 +46,8 @@ pub fn is_ignored(path: &Path) -> bool {
             || s.eq_ignore_ascii_case("#recycle")
             || s.eq_ignore_ascii_case("$RECYCLE.BIN")
             || s.eq_ignore_ascii_case("Thumbs.db")
+            // Where Safelight puts spare copies and cleaned-up files; never re-import them.
+            || s.eq_ignore_ascii_case("Safelight bin")
     })
 }
 
@@ -63,6 +65,7 @@ mod tests {
     fn ignores_clutter() {
         assert!(is_ignored(Path::new("photos/@eaDir/x.jpg")));
         assert!(is_ignored(Path::new("photos/.trash/x.jpg")));
+        assert!(is_ignored(Path::new("Safelight bin/2026-11-03/x.jpg")));
         assert!(!is_ignored(Path::new("photos/2024/x.jpg")));
     }
 }

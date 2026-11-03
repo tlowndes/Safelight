@@ -3,7 +3,7 @@ mod update;
 
 use base64::Engine;
 use safelight_core::{
-    cleanup, develop::{self, Edits, Preset}, dupes, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
+    cleanup, develop::{self, Edits, Preset}, dupes, exact, folders, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
     ScanReport, Source, Stats,
 };
 use serde::Serialize;
@@ -71,8 +71,13 @@ async fn stats(state: State<'_, AppState>) -> CmdResult<Stats> {
 }
 
 #[tauri::command]
-async fn library(state: State<'_, AppState>, limit: Option<i64>) -> CmdResult<Vec<MonthGroup>> {
-    with_db!(state, |cat| cat.library(limit.unwrap_or(3000)))
+async fn library(state: State<'_, AppState>, limit: Option<i64>, folder: Option<folders::FolderRef>) -> CmdResult<Vec<MonthGroup>> {
+    with_db!(state, |cat| cat.library_in(limit.unwrap_or(3000), folder.as_ref()))
+}
+
+#[tauri::command]
+async fn folder_tree(state: State<'_, AppState>) -> CmdResult<Vec<folders::FolderNode>> {
+    with_db!(state, |cat| folders::folder_tree(&cat))
 }
 
 #[tauri::command]
@@ -157,6 +162,55 @@ async fn dup_groups(state: State<'_, AppState>) -> CmdResult<Vec<dupes::Group>> 
 #[tauri::command]
 async fn dup_resolve(state: State<'_, AppState>, keep: Vec<i64>, drop: Vec<i64>) -> CmdResult<()> {
     with_db!(state, |cat| dupes::resolve(&cat, &keep, &drop))
+}
+
+#[tauri::command]
+async fn exact_groups(state: State<'_, AppState>) -> CmdResult<Vec<exact::ExactGroup>> {
+    with_db!(state, |cat| exact::exact_groups(&cat))
+}
+
+#[tauri::command]
+async fn exact_resolve(state: State<'_, AppState>, sha256: String, keep: Vec<i64>) -> CmdResult<()> {
+    with_db!(state, |cat| exact::resolve(&cat, &sha256, &keep))
+}
+
+#[tauri::command]
+async fn exact_keep_preferred_all(state: State<'_, AppState>) -> CmdResult<u64> {
+    with_db!(state, |cat| exact::keep_preferred_all(&cat))
+}
+
+#[tauri::command]
+async fn exact_reset(state: State<'_, AppState>, sha256: String) -> CmdResult<()> {
+    with_db!(state, |cat| exact::reset(&cat, &sha256))
+}
+
+#[tauri::command]
+async fn spare_summary(state: State<'_, AppState>) -> CmdResult<exact::SpareSummary> {
+    with_db!(state, |cat| exact::spare_summary(&cat))
+}
+
+#[tauri::command]
+async fn move_spares(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<exact::MoveReport> {
+    with_db!(state, |cat| exact::move_spares(&cat, |done, total| {
+        let _ = app.emit("move-progress", serde_json::json!({ "done": done, "total": total }));
+    }))
+}
+
+#[tauri::command]
+async fn move_batches(state: State<'_, AppState>) -> CmdResult<Vec<exact::MoveBatch>> {
+    with_db!(state, |cat| exact::move_batches(&cat))
+}
+
+/// Put a batch of moved files back, then re-scan their sources so they reappear.
+#[tauri::command]
+async fn undo_moves(state: State<'_, AppState>, batch: i64) -> CmdResult<exact::UndoReport> {
+    with_db!(state, |cat| (|| {
+        let report = exact::undo_batch(&cat, batch)?;
+        for id in &report.source_ids {
+            scan_source(&cat, *id, |_| {})?;
+        }
+        Ok::<_, safelight_core::Error>(report)
+    })())
 }
 
 // ---------- organise ----------
@@ -480,7 +534,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_sources, add_source, remove_source, stats, library, item, scan, process_thumbnails,
             get_settings, set_setting,
-            dup_groups, dup_resolve,
+            dup_groups, dup_resolve, folder_tree,
+            exact_groups, exact_resolve, exact_keep_preferred_all, exact_reset, spare_summary, move_spares, move_batches, undo_moves,
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,

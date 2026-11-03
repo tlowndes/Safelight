@@ -11,6 +11,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Next / previous photo", keys: ["Wheel"], where: "Loupe" },
       { does: "Move the focus", keys: ["↑", "↓", "←", "→"], where: "Grid" },
       { does: "Grid", keys: ["G"] },
+      { does: "Show or hide the folder tree", keys: ["F"], where: "Grid" },
       { does: "Loupe (full screen)", keys: ["E"] },
       { does: "Open in the editor", keys: ["D"] },
       { does: "First / last", keys: ["Home", "/", "End"] },
@@ -55,7 +56,8 @@ export const SHORTCUTS: ShortcutGroup[] = [
     name: "Duplicates",
     items: [
       { does: "Keep the chosen copies", keys: ["Enter"] },
-      { does: "Not duplicates", keys: ["N"] },
+      { does: "Next / previous set", keys: ["↓", "/", "↑"] },
+      { does: "Not duplicates", keys: ["N"], where: "Look-alikes" },
     ],
   },
   {

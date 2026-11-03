@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, dateTimeLabel, formatBytes, Item, monthLabel, MonthGroup, n, Source, Stats } from "../api";
+import { api, dateTimeLabel, FolderNode, FolderRef, formatBytes, Item, monthLabel, MonthGroup, n, Source, Stats } from "../api";
 import Thumb from "../components/Thumb";
+import FolderTree from "../components/FolderTree";
 import DeleteDialog from "../components/DeleteDialog";
 import Loupe from "./Loupe";
 import { isTyping } from "../shortcuts";
@@ -17,7 +18,40 @@ type Props = {
   onError: (e: string) => void;
 };
 
-export default function Library({ groups, stats, sources, onAddSources, onEdit, onPatch, onChanged, onError }: Props) {
+const FOLDERS_KEY = "safelight.folders-open";
+function folderPanelSaved() {
+  try { return localStorage.getItem(FOLDERS_KEY) === "1"; } catch { return false; }
+}
+
+export default function Library({ groups: allGroups, stats, sources, onAddSources, onEdit, onPatch, onChanged, onError }: Props) {
+  // Folder tree: the panel, the chosen folder, and what's inside it.
+  const [showFolders, setShowFolders] = useState(folderPanelSaved);
+  const [tree, setTree] = useState<FolderNode[]>([]);
+  const [folder, setFolder] = useState<FolderRef | null>(null);
+  const [folderGroups, setFolderGroups] = useState<MonthGroup[] | null>(null);
+  useEffect(() => {
+    try { localStorage.setItem(FOLDERS_KEY, showFolders ? "1" : "0"); } catch { /* private window */ }
+  }, [showFolders]);
+  // Reload the tree and the folder's photos whenever the library changes.
+  useEffect(() => {
+    if (showFolders) api.folderTree().then(setTree).catch((e) => onError(String(e)));
+  }, [allGroups, showFolders]);
+  useEffect(() => {
+    if (!folder) { setFolderGroups(null); return; }
+    let live = true;
+    api.library(3000, folder).then((g) => live && setFolderGroups(g)).catch((e) => onError(String(e)));
+    return () => { live = false; };
+  }, [allGroups, folder?.source_id, folder?.path]);
+  // Closing the panel goes back to everything.
+  useEffect(() => { if (!showFolders) setFolder(null); }, [showFolders]);
+  const groups = folder ? folderGroups ?? [] : allGroups;
+  const patchItems = (ids: number[], p: Partial<Item>) => {
+    onPatch(ids, p);
+    const set = new Set(ids);
+    setFolderGroups((gs) => gs && gs.map((g) => ({ ...g, items: g.items.map((i) => (set.has(i.id) ? { ...i, ...p } : i)) })));
+  };
+  const folderNode = folder ? tree.find((f) => f.source_id === folder.source_id && f.path === folder.path) : undefined;
+
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -64,12 +98,12 @@ export default function Library({ groups, stats, sources, onAddSources, onEdit, 
 
   const rate = async (ids: number[], rating: number) => {
     if (!ids.length) return;
-    onPatch(ids, { rating });
+    patchItems(ids, { rating });
     try { await api.setRating(ids, rating); } catch (e) { onError(String(e)); onChanged(); }
   };
   const flag = async (ids: number[], value: number) => {
     if (!ids.length) return;
-    onPatch(ids, { flag: value });
+    patchItems(ids, { flag: value });
     try { await api.setFlag(ids, value); } catch (e) { onError(String(e)); onChanged(); }
   };
   const hide = async (ids: number[]) => {
@@ -168,6 +202,7 @@ export default function Library({ groups, stats, sources, onAddSources, onEdit, 
       else if (k === "x" || k === "X") flag(targets(), -1);
       else if (k === "u" || k === "U") flag(targets(), 0);
       else if (k === "h" || k === "H") hide(targets());
+      else if (k === "f" || k === "F") setShowFolders((v) => !v);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -196,11 +231,20 @@ export default function Library({ groups, stats, sources, onAddSources, onEdit, 
   return (
     <>
       <div className="top">
-        <h1>All photos</h1>
-        <span className="sub">{n(visible)} from {sources.length} source{sources.length === 1 ? "" : "s"}</span>
+        <h1 className="ellipsis">{folderNode ? folderNode.name : "All photos"}</h1>
+        <span className="sub ellipsis">
+          {folderNode
+            ? `${n(folderNode.count)} in ${folderNode.depth === 0 ? "this source" : `${sources.find((s) => s.id === folderNode.source_id)?.name ?? "source"} › ${folderNode.path.split("/").join(" › ")}`}`
+            : `${n(visible)} from ${sources.length} source${sources.length === 1 ? "" : "s"}`}
+        </span>
         <label className="vh" htmlFor="library-search">Search</label>
         <input id="library-search" className="search" type="search" placeholder="Search file names or dates, e.g. 2024-06" value={query}
           onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && (e.currentTarget.blur(), setQuery(""))} />
+        <div className="seg" role="group" aria-label="Panels">
+          <button className={showFolders ? "on" : ""} aria-pressed={showFolders} aria-label="Folders (F)" title="Folders (F)" onClick={() => setShowFolders(!showFolders)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z" /></svg>
+          </button>
+        </div>
         <div className="seg" role="group" aria-label="View">
           <button className="on" aria-label="Grid (G)" title="Grid (G)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
@@ -218,8 +262,10 @@ export default function Library({ groups, stats, sources, onAddSources, onEdit, 
         {chip("rated", "Rated")}
         {chip("rejected", "Rejected")}
         {chip("edited", "Edited")}
-        {chip("dupes", `Exact copies · ${n(stats?.exact_duplicate_files ?? 0)}`)}
+        {chip("dupes", "Exact copies")}
       </div>
+      <div className={`lib-body ${showFolders ? "with-folders" : ""}`}>
+      {showFolders && <FolderTree nodes={tree} sources={sources} selected={folder} onSelect={(f) => { setFolder(f); setSelected(new Set()); setCursor(null); }} />}
       <div ref={gridRef} className={`grid ${selecting ? "selecting" : ""}`}>
         {shown.map((g) => (
           <section key={g.month} id={`m-${g.month}`}>
@@ -252,7 +298,8 @@ export default function Library({ groups, stats, sources, onAddSources, onEdit, 
             </div>
           </section>
         ))}
-        {shown.length === 0 && <p className="muted">No matches.</p>}
+        {shown.length === 0 && <p className="muted">{folder && folderGroups === null ? "Loading…" : "No matches."}</p>}
+      </div>
       </div>
       {!selecting && (
         <nav className="scrub" aria-label="Years">
