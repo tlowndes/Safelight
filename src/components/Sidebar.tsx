@@ -49,7 +49,7 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, onShortc
       {nav("edit", "Edit")}
 
       <div className="sect">Needs a look</div>
-      {nav("duplicates", "Duplicates", stats ? n(stats.exact_duplicate_files) : undefined, true)}
+      {nav("duplicates", "Duplicates", stats ? n(stats.exact_to_review) : undefined, true)}
       {nav("organise", "Organise")}
       {nav("cleanup", "Clean-up")}
 
