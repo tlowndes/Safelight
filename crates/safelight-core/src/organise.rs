@@ -394,7 +394,7 @@ pub fn plan_summary(cat: &Catalogue) -> Result<PlanSummary> {
 }
 
 /// Copy to `dest` safely: write to a temporary name, check the fingerprint, then rename into place.
-fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<()> {
+pub(crate) fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<()> {
     if dest.exists() {
         if hash::sha256_file(dest)? == sha {
             return Ok(());
@@ -461,11 +461,11 @@ pub fn run_copy(cat: &Catalogue, mut progress: impl FnMut(&CopyProgress)) -> Res
             )?;
             report.copied += 1;
         }
-        if let Some(b) = &backup {
+        if let Some(b) = backup.as_ref().filter(|_| !backup_done) {
             let lib_path: String = cat.conn.query_row("SELECT lib_path FROM copies WHERE sha256 = ?1", [&p.sha256], |r| r.get(0))?;
-            let bdest = PathBuf::from(b).join(&p.dest);
-            match copy_verified(Path::new(&lib_path), &bdest, &p.sha256) {
-                Ok(()) => {
+            let bdest = crate::backup::free_dest(Path::new(b), &p.dest, &p.sha256);
+            match bdest.and_then(|d| copy_verified(Path::new(&lib_path), &d, &p.sha256).map(|_| d)) {
+                Ok(bdest) => {
                     cat.conn.execute(
                         "UPDATE copies SET backup_path = ?2, backup_verified = 1 WHERE sha256 = ?1",
                         params![p.sha256, bdest.to_string_lossy()],

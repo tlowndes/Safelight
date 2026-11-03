@@ -1,8 +1,9 @@
 //! Safelight core: scanning sources, reading capture dates, fingerprinting files, finding
-//! duplicates, planning and copying the organised library, clean-up, reference, editing and
+//! duplicates, planning and copying the organised library, NAS backup, clean-up, reference, editing and
 //! screenshot import rules (from Snapsort).
 //! No UI code lives here, so it can be tested on any platform.
 
+pub mod backup;
 pub mod catalogue;
 pub mod cleanup;
 pub mod dates;

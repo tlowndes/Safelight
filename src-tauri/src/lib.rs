@@ -4,14 +4,18 @@ mod update;
 
 use base64::Engine;
 use safelight_core::{
-    cleanup, develop::{self, Edits, Preset}, dupes, exact, folders, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
+    backup, cleanup, develop::{self, Edits, Preset}, dupes, exact, folders, imaging, organise, reference, scan_source, Catalogue, Item, MonthGroup,
     ScanReport, Source, Stats,
 };
 use serde::Serialize;
 use std::{
     io::Cursor,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -22,6 +26,8 @@ struct AppState {
     cache_dir: PathBuf,
     /// Decoded image the editor is working on, at preview size.
     preview: Arc<Mutex<Option<(i64, image::DynamicImage)>>>,
+    /// Set while a NAS backup is running, so the weekly timer and the button never overlap.
+    backing_up: Arc<AtomicBool>,
     /// Where screenshots and recordings are saved (a library source).
     captures_root: PathBuf,
     /// Where Windows saves screenshots: Pictures\Screenshots.
@@ -149,7 +155,7 @@ async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
 
 #[tauri::command]
 async fn set_setting(state: State<'_, AppState>, key: String, value: String) -> CmdResult<()> {
-    if !matches!(key.as_str(), "library_root" | "backup_root" | "auto_reference") {
+    if !matches!(key.as_str(), "library_root" | "backup_root" | "auto_reference" | "auto_backup") {
         return Err(format!("unknown setting {key}"));
     }
     with_db!(state, |cat| cat.set_setting(&key, &value))
@@ -259,6 +265,53 @@ async fn run_copy(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResul
         .map_err(err)
     })
     .await
+}
+
+// ---------- NAS backup ----------
+
+#[tauri::command]
+async fn backup_status(state: State<'_, AppState>) -> CmdResult<backup::BackupStatus> {
+    with_db!(state, |cat| backup::status(&cat))
+}
+
+/// Back up now (the button). The weekly timer uses the same path.
+#[tauri::command]
+async fn run_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<backup::BackupReport> {
+    let (db, flag) = (state.db_path.clone(), state.backing_up.clone());
+    blocking(move || backup_once(&app, &db, &flag, false)).await
+}
+
+fn backup_once(app: &tauri::AppHandle, db: &std::path::Path, flag: &AtomicBool, automatic: bool) -> CmdResult<backup::BackupReport> {
+    if flag.swap(true, Ordering::SeqCst) {
+        return Err("a backup is already running".into());
+    }
+    let result = Catalogue::open(db).map_err(err).and_then(|cat| {
+        backup::run_backup(&cat, automatic, |p| {
+            let _ = app.emit("backup-progress", p);
+        })
+        .map_err(err)
+    });
+    flag.store(false, Ordering::SeqCst);
+    let _ = app.emit("backup-finished", &result);
+    result
+}
+
+/// Checks every hour (and shortly after launch) whether the weekly backup is due. If the NAS
+/// can't be reached it quietly tries again next hour, so a laptop away from home just catches up later.
+fn start_backup_timer(app: tauri::AppHandle, db: PathBuf, flag: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(60));
+        loop {
+            let due = Catalogue::open(&db).and_then(|cat| {
+                let root = cat.setting("backup_root")?;
+                Ok(backup::is_due_now(&cat)? && root.as_deref().is_some_and(backup::reachable))
+            });
+            if matches!(due, Ok(true)) {
+                let _ = backup_once(&app, &db, &flag, true);
+            }
+            std::thread::sleep(Duration::from_secs(60 * 60));
+        }
+    });
 }
 
 // ---------- clean-up ----------
@@ -568,7 +621,9 @@ pub fn run() {
                 .into_owned();
             let shots_known = shots::Known::default();
             shots::start_watcher(app.handle().clone(), db_path.clone(), shots_default.clone(), shots_known.clone());
-            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known, captures_root });
+            let backing_up = Arc::new(AtomicBool::new(false));
+            start_backup_timer(app.handle().clone(), db_path.clone(), backing_up.clone());
+            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known, captures_root, backing_up });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -589,7 +644,7 @@ pub fn run() {
             get_settings, set_setting,
             dup_groups, dup_resolve, folder_tree,
             exact_groups, exact_resolve, exact_keep_preferred_all, exact_reset, spare_summary, move_spares, move_batches, undo_moves,
-            suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
+            suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy, backup_status, run_backup,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
