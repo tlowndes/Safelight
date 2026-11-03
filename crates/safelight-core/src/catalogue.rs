@@ -42,6 +42,12 @@ pub struct Item {
     pub edited: bool,
     /// True when another file in the catalogue has the same fingerprint.
     pub has_exact_duplicate: bool,
+    /// 0 = unrated, 1 to 5 stars.
+    pub rating: i64,
+    /// 1 = pick, -1 = reject, 0 = unflagged.
+    pub flag: i64,
+    /// Hidden from the library, the timeline and organising. The file is never touched.
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +67,7 @@ pub struct Stats {
     pub exact_duplicate_groups: i64,
     pub needing_thumbnails: i64,
     pub reference: i64,
+    pub hidden: i64,
 }
 
 const SCHEMA: &str = r#"
@@ -132,12 +139,16 @@ const ITEM_COLUMNS: &[(&str, &str)] = &[
     ("dup_keeper", "TEXT"),
     ("is_reference", "INTEGER"),
     ("topic_id", "INTEGER"),
+    ("rating", "INTEGER NOT NULL DEFAULT 0"),
+    ("flag", "INTEGER NOT NULL DEFAULT 0"),
+    ("hidden", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 pub(crate) const ITEM_SELECT: &str = "SELECT i.id, i.source_id, i.path, i.kind, i.size, i.sha256, i.taken_at, i.date_source,
     i.width, i.height, i.has_camera, i.thumb, i.dup_status, i.is_reference, i.topic_id,
     EXISTS(SELECT 1 FROM edits e WHERE e.item_id = i.id),
-    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256) > 1
+    (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256) > 1,
+    i.rating, i.flag, i.hidden
   FROM items i";
 
 pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
@@ -159,6 +170,9 @@ pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
         topic_id: r.get(14)?,
         edited: r.get(15)?,
         has_exact_duplicate: r.get(16)?,
+        rating: r.get(17)?,
+        flag: r.get(18)?,
+        hidden: r.get(19)?,
     })
 }
 
@@ -264,11 +278,55 @@ impl Catalogue {
             .optional()?)
     }
 
+    /// Star rating for each photo: 0 clears it, 1 to 5 sets it. Only the catalogue changes.
+    pub fn set_rating(&self, ids: &[i64], rating: i64) -> Result<()> {
+        let rating = rating.clamp(0, 5);
+        let mut st = self.conn.prepare("UPDATE items SET rating = ?1 WHERE id = ?2")?;
+        for id in ids {
+            st.execute(params![rating, id])?;
+        }
+        Ok(())
+    }
+
+    /// Pick (1), reject (-1) or clear (0). Rejecting never deletes anything.
+    pub fn set_flag(&self, ids: &[i64], flag: i64) -> Result<()> {
+        let flag = flag.signum();
+        let mut st = self.conn.prepare("UPDATE items SET flag = ?1 WHERE id = ?2")?;
+        for id in ids {
+            st.execute(params![flag, id])?;
+        }
+        Ok(())
+    }
+
+    /// Hide or show photos. Hiding applies to every exact copy (same fingerprint), so the photo
+    /// doesn't reappear from another source. Nothing on disk changes.
+    pub fn set_hidden(&self, ids: &[i64], hidden: bool) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for id in ids {
+            tx.execute(
+                "UPDATE items SET hidden = ?1 WHERE sha256 = (SELECT sha256 FROM items WHERE id = ?2)",
+                params![hidden, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Hidden photos, one per fingerprint, newest first.
+    pub fn hidden_items(&self) -> Result<Vec<Item>> {
+        let mut st = self.conn.prepare(&format!(
+            "{ITEM_SELECT} WHERE i.hidden = 1 AND i.id IN (SELECT MIN(id) FROM items WHERE hidden = 1 GROUP BY sha256)
+             ORDER BY i.taken_at IS NULL, i.taken_at DESC, i.path"
+        ))?;
+        let rows = st.query_map([], item_from_row)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     pub fn stats(&self) -> Result<Stats> {
         let mut s = Stats::default();
         self.conn.query_row(
             "SELECT COALESCE(SUM(kind='photo'),0), COALESCE(SUM(kind='video'),0), COALESCE(SUM(size),0),
-                    COALESCE(SUM(thumb_tried = 0),0), COALESCE(SUM(is_reference = 1),0) FROM items",
+                    COALESCE(SUM(thumb_tried = 0),0), COALESCE(SUM(is_reference = 1),0), COALESCE(SUM(hidden = 1),0) FROM items",
             [],
             |r| {
                 s.photos = r.get(0)?;
@@ -276,6 +334,7 @@ impl Catalogue {
                 s.total_bytes = r.get(2)?;
                 s.needing_thumbnails = r.get(3)?;
                 s.reference = r.get(4)?;
+                s.hidden = r.get(5)?;
                 Ok(())
             },
         )?;
@@ -296,7 +355,7 @@ impl Catalogue {
     pub fn library(&self, limit: i64) -> Result<Vec<MonthGroup>> {
         let mut st = self.conn.prepare(&format!(
             "{ITEM_SELECT}
-             WHERE COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop'
+             WHERE COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop' AND i.hidden = 0
              ORDER BY i.taken_at IS NULL, i.taken_at DESC, i.path
              LIMIT ?1"
         ))?;

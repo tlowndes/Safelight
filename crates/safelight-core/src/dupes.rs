@@ -69,7 +69,7 @@ pub fn lookalike_groups(cat: &Catalogue) -> Result<Vec<Group>> {
     let items: Vec<Item> = cat
         .conn
         .prepare(&format!(
-            "{ITEM_SELECT} WHERE i.phash IS NOT NULL AND i.id IN (SELECT MIN(id) FROM items GROUP BY sha256)"
+            "{ITEM_SELECT} WHERE i.phash IS NOT NULL AND i.hidden = 0 AND i.id IN (SELECT MIN(id) FROM items GROUP BY sha256)"
         ))?
         .query_map([], item_from_row)?
         .collect::<std::result::Result<_, _>>()?;
