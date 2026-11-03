@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, MonthGroup, Progress, Source, Stats } from "./api";
+import { api, Item, MonthGroup, Progress, Source, Stats } from "./api";
 import Sidebar, { View } from "./components/Sidebar";
 import Library from "./views/Library";
 import Sources from "./views/Sources";
@@ -8,6 +8,9 @@ import Organise from "./views/Organise";
 import Cleanup from "./views/Cleanup";
 import Reference from "./views/Reference";
 import Editor from "./views/Editor";
+import Hidden from "./views/Hidden";
+import ShortcutsDialog from "./components/ShortcutsDialog";
+import { isTyping } from "./shortcuts";
 
 export default function App() {
   const [view, setView] = useState<View>("library");
@@ -19,6 +22,30 @@ export default function App() {
   const [editing, setEditing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [keysOpen, setKeysOpen] = useState(false);
+
+  /** Update items in place (ratings, flags) without reloading the whole library. */
+  const patchItems = useCallback((ids: number[], patch: Partial<Item>) => {
+    const set = new Set(ids);
+    setGroups((gs) => gs.map((g) => ({ ...g, items: g.items.map((i) => (set.has(i.id) ? { ...i, ...patch } : i)) })));
+  }, []);
+
+  // Keys that work on every screen.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "?" && !isTyping(e)) { e.preventDefault(); setKeysOpen(true); return; }
+      if (keysOpen) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setView("library");
+        setTimeout(() => document.getElementById("library-search")?.focus(), 0);
+        return;
+      }
+      if (!isTyping(e) && !e.ctrlKey && !e.metaKey && (e.key === "g" || e.key === "G") && view !== "library") setView("library");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keysOpen, view]);
 
   const refresh = useCallback(async () => {
     try {
@@ -71,11 +98,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} />
+      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} onShortcuts={() => setKeysOpen(true)} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
         {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
-        {view === "library" && <Library groups={groups} stats={stats} sourceCount={sources.length} onAddSources={() => setView("sources")} onOpen={openEditor} onChanged={refresh} onError={setError} />}
+        {view === "library" && <Library groups={groups} stats={stats} sources={sources} onAddSources={() => setView("sources")} onEdit={openEditor} onPatch={patchItems} onChanged={refresh} onError={setError} />}
+        {view === "hidden" && <Hidden onChanged={refresh} onError={setError} />}
         {view === "sources" && <Sources sources={sources} scanProgress={scanProgress} thumbProgress={thumbProgress} onScan={scan} onChanged={refresh} onDone={() => setView("duplicates")} />}
         {view === "duplicates" && <Duplicates stats={stats} onChanged={refresh} onError={setError} onNext={() => setView("organise")} />}
         {view === "organise" && <Organise onChanged={refresh} onError={setError} onNext={() => setView("cleanup")} />}
@@ -83,6 +111,7 @@ export default function App() {
         {view === "reference" && <Reference onError={setError} onOpen={openEditor} />}
         {view === "edit" && <Editor itemId={editing} groups={groups} onPick={setEditing} onError={setError} onChanged={refresh} />}
       </main>
+      {keysOpen && <ShortcutsDialog onClose={() => setKeysOpen(false)} />}
     </div>
   );
 }

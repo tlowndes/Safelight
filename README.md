@@ -11,6 +11,10 @@ One tidy photo and video library from Proton Drive, Google Drive, Google Photos 
 - **Organise:** suggests events from busy days, previews the new `Photos/YYYY/YYYY-MM Event/` structure, then copies to the library and the backup mirror, checking every file.
 - **Clean-up:** once copies are verified, moves originals to each source's Recycle Bin (or a `Safelight bin` folder on network drives). Nothing goes without your OK.
 - **Reference:** screenshots and saved images are kept apart in topics with tags.
+- **Viewer:** full-screen loupe with glass overlays and a filmstrip. The mouse wheel moves to the next photo, Ctrl + wheel zooms at the cursor, double-click toggles fit and 100%.
+- **Rate, flag, hide:** 1–5 stars, Pick (P) and Reject (X), and Hide (H) to keep photos out of the library without touching the files. Hidden photos are listed under Hidden and can be brought back.
+- **Keyboard:** Lightroom-style shortcuts throughout. Press `?` for the full list (kept in `src/shortcuts.ts`).
+- **Look:** graphite panels, white main buttons, amber only for selection and focus. Follows the Windows light or dark setting.
 - **Editor:** light, colour, tone curve, HSL, crop, rotate and presets. Edits are saved separately and originals are never changed; export to JPEG.
 
 Not yet: Google Photos Picker API top-ups, RAW editing, Mac build.

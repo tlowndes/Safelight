@@ -7,11 +7,12 @@ export type Item = {
   taken_at: string | null; date_source: string | null; width: number | null; height: number | null;
   has_camera: boolean; thumb: string | null; dup_status: string | null; is_reference: boolean | null;
   topic_id: number | null; edited: boolean; has_exact_duplicate: boolean;
+  /** 0 = unrated, 1-5 stars */ rating: number; /** 1 pick, -1 reject, 0 none */ flag: number; hidden: boolean;
 };
 export type MonthGroup = { month: string; items: Item[] };
 export type Stats = {
   photos: number; videos: number; total_bytes: number; exact_duplicate_files: number;
-  exact_duplicate_groups: number; needing_thumbnails: number; reference: number;
+  exact_duplicate_groups: number; needing_thumbnails: number; reference: number; hidden: number;
 };
 export type Progress = { done: number; total: number; current?: string; stage?: string; source_id?: number };
 export type ScanReport = { found: number; added: number; updated: number; unchanged: number; removed: number; errors: string[] };
@@ -98,6 +99,12 @@ export const api = {
   savePreset: (name: string, edits: Edits) => invoke<number>("save_preset", { name, edits }),
   deletePreset: (id: number) => invoke<void>("delete_preset", { id }),
 
+  setRating: (ids: number[], rating: number) => invoke<void>("set_rating", { ids, rating }),
+  setFlag: (ids: number[], flag: number) => invoke<void>("set_flag", { ids, flag }),
+  setHidden: (ids: number[], hidden: boolean) => invoke<void>("set_hidden", { ids, hidden }),
+  hiddenItems: () => invoke<Item[]>("hidden_items"),
+  viewImage: (id: number) => invoke<string>("view_image", { id }),
+
   onScanProgress: (cb: (p: Progress) => void) => on("scan-progress", cb),
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),
   onCopyProgress: (cb: (p: Progress) => void) => on("copy-progress", cb),
@@ -114,6 +121,8 @@ export function thumbUrl(item: Item): string | null {
   return item.kind === "photo" && VIEWABLE.includes(ext) ? convertFileSrc(item.path) : null;
 }
 export const fileUrl = (p: string) => convertFileSrc(p);
+/** True when the webview can show the original file at full size. */
+export const isViewable = (item: Item) => item.kind === "photo" && VIEWABLE.includes(item.path.split(".").pop()?.toLowerCase() ?? "");
 
 export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 export const fileExt = (path: string) => (path.split(".").pop() ?? "").toUpperCase();

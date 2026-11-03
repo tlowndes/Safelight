@@ -78,7 +78,7 @@ pub fn suggest_events(cat: &Catalogue) -> Result<Vec<EventSuggestion>> {
         .conn
         .prepare(
             "SELECT substr(taken_at, 1, 10) d, COUNT(*) FROM items
-             WHERE taken_at IS NOT NULL AND COALESCE(is_reference, 0) = 0 AND COALESCE(dup_status, '') <> 'drop'
+             WHERE taken_at IS NOT NULL AND COALESCE(is_reference, 0) = 0 AND COALESCE(dup_status, '') <> 'drop' AND hidden = 0
              GROUP BY d ORDER BY d",
         )?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -122,7 +122,7 @@ pub fn suggest_events(cat: &Catalogue) -> Result<Vec<EventSuggestion>> {
 fn event_contents(cat: &Catalogue, start: &str, end: &str) -> Result<(i64, Vec<String>)> {
     let range = params![format!("{start} 00:00:00"), format!("{end} 23:59:59")];
     let count = cat.conn.query_row(
-        "SELECT COUNT(*) FROM items WHERE taken_at BETWEEN ?1 AND ?2 AND COALESCE(is_reference,0) = 0 AND COALESCE(dup_status,'') <> 'drop'",
+        "SELECT COUNT(*) FROM items WHERE taken_at BETWEEN ?1 AND ?2 AND COALESCE(is_reference,0) = 0 AND COALESCE(dup_status,'') <> 'drop' AND hidden = 0",
         range,
         |r| r.get(0),
     )?;
@@ -241,7 +241,7 @@ pub fn build_plan(cat: &Catalogue) -> Result<Vec<PlannedFile>> {
         .conn
         .prepare(
             "SELECT id, sha256, path, size, taken_at, date_source, is_reference, topic_id FROM items
-             WHERE COALESCE(dup_status, '') <> 'drop' ORDER BY sha256, id",
+             WHERE COALESCE(dup_status, '') <> 'drop' AND hidden = 0 ORDER BY sha256, id",
         )?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))?
         .collect::<std::result::Result<_, _>>()?;

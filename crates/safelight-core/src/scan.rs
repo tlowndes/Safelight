@@ -128,6 +128,11 @@ fn index_file(
            thumb = NULL, thumb_tried = 0, phash = NULL",
         params![source_id, path_str, kind.as_str(), size, mtime, sha, taken, date_src, scan_id, ex.has_camera, ex.width, ex.height],
     )?;
+    // A new copy of a photo the user hid stays hidden.
+    conn.execute(
+        "UPDATE items SET hidden = 1 WHERE path = ?1 AND EXISTS(SELECT 1 FROM items j WHERE j.sha256 = ?2 AND j.hidden = 1)",
+        params![path_str, sha],
+    )?;
     if existing.is_some() {
         report.updated += 1;
     } else {

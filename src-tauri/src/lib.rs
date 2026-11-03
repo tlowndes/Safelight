@@ -402,6 +402,52 @@ async fn delete_preset(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     with_db!(state, |cat| develop::delete_preset(&cat, id))
 }
 
+// ---------- viewer: rating, flags, hiding ----------
+
+#[tauri::command]
+async fn set_rating(state: State<'_, AppState>, ids: Vec<i64>, rating: i64) -> CmdResult<()> {
+    with_db!(state, |cat| cat.set_rating(&ids, rating))
+}
+
+#[tauri::command]
+async fn set_flag(state: State<'_, AppState>, ids: Vec<i64>, flag: i64) -> CmdResult<()> {
+    with_db!(state, |cat| cat.set_flag(&ids, flag))
+}
+
+#[tauri::command]
+async fn set_hidden(state: State<'_, AppState>, ids: Vec<i64>, hidden: bool) -> CmdResult<()> {
+    with_db!(state, |cat| cat.set_hidden(&ids, hidden))
+}
+
+#[tauri::command]
+async fn hidden_items(state: State<'_, AppState>) -> CmdResult<Vec<Item>> {
+    with_db!(state, |cat| cat.hidden_items())
+}
+
+/// Long edge of the loupe picture for files the webview can't show directly (HEIC, RAW, TIFF).
+const VIEW_EDGE: u32 = 2560;
+
+/// A full-screen picture of a photo the webview can't open itself, cached as a JPEG beside the
+/// thumbnails. Returns its path. The original is only read.
+#[tauri::command]
+async fn view_image(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    let db = state.db_path.clone();
+    let dir = state.cache_dir.join("view");
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let item = cat.item(id).map_err(err)?.ok_or("photo not found")?;
+        let out = dir.join(format!("{}.jpg", &item.sha256[..32.min(item.sha256.len())]));
+        if !out.exists() {
+            std::fs::create_dir_all(&dir).map_err(err)?;
+            let img = imaging::preview_image(std::path::Path::new(&item.path), VIEW_EDGE)
+                .ok_or("Safelight can't show this file yet")?;
+            image::DynamicImage::ImageRgb8(img.to_rgb8()).save_with_format(&out, image::ImageFormat::Jpeg).map_err(err)?;
+        }
+        Ok(out.to_string_lossy().into_owned())
+    })
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -425,7 +471,8 @@ pub fn run() {
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
-            load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset
+            load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
+            set_rating, set_flag, set_hidden, hidden_items, view_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running Safelight");
