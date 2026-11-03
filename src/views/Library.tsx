@@ -1,0 +1,322 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, dateTimeLabel, formatBytes, Item, monthLabel, MonthGroup, n, Source, Stats } from "../api";
+import Thumb from "../components/Thumb";
+import DeleteDialog from "../components/DeleteDialog";
+import Loupe from "./Loupe";
+import { isTyping } from "../shortcuts";
+
+type Filter = "all" | "photo" | "video" | "picks" | "rated" | "rejected" | "dupes" | "edited";
+type Props = {
+  groups: MonthGroup[];
+  stats: Stats | null;
+  sources: Source[];
+  onAddSources: () => void;
+  onEdit: (id: number) => void;
+  onPatch: (ids: number[], patch: Partial<Item>) => void;
+  onChanged: () => void;
+  onError: (e: string) => void;
+};
+
+export default function Library({ groups, stats, sources, onAddSources, onEdit, onPatch, onChanged, onError }: Props) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [loupe, setLoupe] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; undo?: () => void } | null>(null);
+  const anchor = useRef<number | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const keep = (i: Item) =>
+      (filter === "all" ||
+        (filter === "dupes" ? i.has_exact_duplicate
+          : filter === "edited" ? i.edited
+          : filter === "picks" ? i.flag === 1
+          : filter === "rejected" ? i.flag === -1
+          : filter === "rated" ? i.rating > 0
+          : i.kind === filter)) &&
+      (!q || i.path.toLowerCase().includes(q) || (i.taken_at ?? "").includes(q));
+    return groups.map((g) => ({ ...g, items: g.items.filter(keep) })).filter((g) => g.items.length > 0);
+  }, [groups, filter, query]);
+  const flat = useMemo(() => shown.flatMap((g) => g.items), [shown]);
+  const indexOf = (id: number | null) => (id === null ? -1 : flat.findIndex((i) => i.id === id));
+
+  // Drop selections that are no longer in the library.
+  useEffect(() => {
+    const ids = new Set(groups.flatMap((g) => g.items.map((i) => i.id)));
+    setSelected((s) => new Set([...s].filter((id) => ids.has(id))));
+  }, [groups]);
+
+  const selecting = selected.size > 0;
+  const selectedBytes = useMemo(() => flat.filter((i) => selected.has(i.id)).reduce((a, i) => a + i.size, 0), [flat, selected]);
+  /** What a rating or flag key applies to: the selection, or else the focused photo. */
+  const targets = () => (selecting ? [...selected] : cursor !== null ? [cursor] : []);
+
+  const say = (text: string, undo?: () => void) => setNotice({ text, undo });
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const rate = async (ids: number[], rating: number) => {
+    if (!ids.length) return;
+    onPatch(ids, { rating });
+    try { await api.setRating(ids, rating); } catch (e) { onError(String(e)); onChanged(); }
+  };
+  const flag = async (ids: number[], value: number) => {
+    if (!ids.length) return;
+    onPatch(ids, { flag: value });
+    try { await api.setFlag(ids, value); } catch (e) { onError(String(e)); onChanged(); }
+  };
+  const hide = async (ids: number[]) => {
+    if (!ids.length) return;
+    // Keep the focus on the photo after the hidden ones, so H can be pressed again and again.
+    const after = flat.find((i, k) => k > indexOf(ids[ids.length - 1]) && !ids.includes(i.id)) ?? [...flat].reverse().find((i) => !ids.includes(i.id));
+    try {
+      await api.setHidden(ids, true);
+      setSelected(new Set());
+      if (cursor !== null && ids.includes(cursor)) setCursor(after?.id ?? null);
+      say(`Hid ${n(ids.length)} photo${ids.length === 1 ? "" : "s"} from the library. Files stay where they are.`, async () => {
+        await api.setHidden(ids, false);
+        setNotice(null);
+        onChanged();
+      });
+      onChanged();
+    } catch (e) { onError(String(e)); }
+  };
+
+  const toggle = (id: number, e?: React.MouseEvent) => {
+    const next = new Set(selected);
+    if (e?.shiftKey && anchor.current !== null) {
+      const a = indexOf(anchor.current);
+      const b = indexOf(id);
+      if (a >= 0 && b >= 0) {
+        for (const i of flat.slice(Math.min(a, b), Math.max(a, b) + 1)) next.add(i.id);
+        setSelected(next);
+        return;
+      }
+    }
+    next.has(id) ? next.delete(id) : next.add(id);
+    anchor.current = id;
+    setSelected(next);
+  };
+
+  const clickTile = (i: Item, e: React.MouseEvent) => {
+    setCursor(i.id);
+    if (selecting || e.shiftKey || e.ctrlKey || e.metaKey) return toggle(i.id, e);
+    setLoupe(i.id);
+  };
+
+  const selectMonth = (g: MonthGroup) => {
+    const all = g.items.every((i) => selected.has(i.id));
+    const next = new Set(selected);
+    g.items.forEach((i) => (all ? next.delete(i.id) : next.add(i.id)));
+    setSelected(next);
+  };
+
+  /** Move the focus to the tile visually above or below, wherever the month breaks fall. */
+  const vertical = (from: number, dir: 1 | -1) => {
+    const root = gridRef.current;
+    const cur = root?.querySelector<HTMLElement>(`[data-id="${from}"]`);
+    if (!root || !cur) return from;
+    const r = cur.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    let best: { id: number; score: number } | null = null;
+    root.querySelectorAll<HTMLElement>("[data-id]").forEach((el) => {
+      const b = el.getBoundingClientRect();
+      const dy = (b.top - r.top) * dir;
+      if (dy < r.height / 2) return;
+      const score = dy * 4 + Math.abs(b.left + b.width / 2 - cx);
+      if (!best || score < best.score) best = { id: Number(el.dataset.id), score };
+    });
+    return (best as { id: number } | null)?.id ?? from;
+  };
+
+  // Keep the focused tile in view.
+  useEffect(() => {
+    if (cursor === null || loupe !== null) return;
+    gridRef.current?.querySelector(`[data-id="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor, loupe]);
+
+  useEffect(() => {
+    if (loupe !== null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e) || confirming) return;
+      const k = e.key;
+      const ctrl = e.ctrlKey || e.metaKey;
+      const at = indexOf(cursor);
+      const move = (id: number | undefined) => { if (id !== undefined) { setCursor(id); e.preventDefault(); } };
+      if (k === "Escape") setSelected(new Set());
+      else if ((k === "Delete" || k === "Backspace") && selecting) setConfirming(true);
+      else if (k === "a" && ctrl) { e.preventDefault(); setSelected(new Set(flat.map((i) => i.id))); }
+      else if (ctrl) return;
+      else if (k === "ArrowRight") move(flat[Math.min(flat.length - 1, at + 1)]?.id ?? flat[0]?.id);
+      else if (k === "ArrowLeft") move(flat[Math.max(0, at - 1)]?.id ?? flat[0]?.id);
+      else if (k === "ArrowDown") move(cursor === null ? flat[0]?.id : vertical(cursor, 1));
+      else if (k === "ArrowUp") move(cursor === null ? flat[0]?.id : vertical(cursor, -1));
+      else if (k === "Home") move(flat[0]?.id);
+      else if (k === "End") move(flat[flat.length - 1]?.id);
+      else if (k === " " && cursor !== null) { e.preventDefault(); toggle(cursor); }
+      else if ((k === "e" || k === "E" || k === "Enter") && (cursor ?? flat[0]?.id) !== undefined) { e.preventDefault(); setLoupe(cursor ?? flat[0].id); }
+      else if ((k === "d" || k === "D") && cursor !== null && flat[at]?.kind === "photo") onEdit(cursor);
+      else if (/^[0-5]$/.test(k)) rate(targets(), Number(k));
+      else if (k === "p" || k === "P") flag(targets(), 1);
+      else if (k === "x" || k === "X") flag(targets(), -1);
+      else if (k === "u" || k === "U") flag(targets(), 0);
+      else if (k === "h" || k === "H") hide(targets());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const visible = (stats?.photos ?? 0) + (stats?.videos ?? 0) - (stats?.hidden ?? 0);
+  const years = [...new Set(groups.map((g) => g.month.slice(0, 4)).filter((y) => /^\d{4}$/.test(y)))];
+  const sourceName = (id: number) => sources.find((s) => s.id === id)?.name ?? "Unknown source";
+
+  if ((stats?.photos ?? 0) + (stats?.videos ?? 0) === 0) {
+    return (
+      <div className="empty">
+        <span className="eyebrow">Library</span>
+        <h2>Nothing here yet</h2>
+        <p>Add Proton Drive, Google Drive, a Google Photos Takeout folder or your NAS, and Safelight will gather everything into one timeline. Nothing is moved or deleted.</p>
+        <button className="btn pri" onClick={onAddSources}>Add sources</button>
+      </div>
+    );
+  }
+
+  const chip = (k: Filter, label: string) => (
+    <button className={`chip ${filter === k ? "on" : ""}`} aria-pressed={filter === k} onClick={() => setFilter(k)}>{label}</button>
+  );
+  const loupeIndex = indexOf(loupe);
+
+  return (
+    <>
+      <div className="top">
+        <h1>All photos</h1>
+        <span className="sub">{n(visible)} from {sources.length} source{sources.length === 1 ? "" : "s"}</span>
+        <label className="vh" htmlFor="library-search">Search</label>
+        <input id="library-search" className="search" type="search" placeholder="Search file names or dates, e.g. 2024-06" value={query}
+          onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && (e.currentTarget.blur(), setQuery(""))} />
+        <div className="seg" role="group" aria-label="View">
+          <button className="on" aria-label="Grid (G)" title="Grid (G)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+          </button>
+          <button aria-label="Loupe (E)" title="Loupe (E)" onClick={() => flat.length && setLoupe(cursor ?? flat[0].id)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /></svg>
+          </button>
+        </div>
+      </div>
+      <div className="chips">
+        {chip("all", "All")}
+        {chip("photo", "Photos")}
+        {chip("video", "Videos")}
+        {chip("picks", "Picks")}
+        {chip("rated", "Rated")}
+        {chip("rejected", "Rejected")}
+        {chip("edited", "Edited")}
+        {chip("dupes", `Exact copies · ${n(stats?.exact_duplicate_files ?? 0)}`)}
+      </div>
+      <div ref={gridRef} className={`grid ${selecting ? "selecting" : ""}`}>
+        {shown.map((g) => (
+          <section key={g.month} id={`m-${g.month}`}>
+            <div className="mh">
+              <b>{monthLabel(g.month)}</b><span>{n(g.items.length)} items</span>
+              <button className="link month-select" onClick={() => selectMonth(g)}>
+                {g.items.every((i) => selected.has(i.id)) ? "Deselect month" : "Select month"}
+              </button>
+            </div>
+            <div className="tiles">
+              {g.items.map((i) => {
+                const on = selected.has(i.id);
+                return (
+                  <Thumb key={i.id} item={i} className={`${on ? "picked" : ""} ${cursor === i.id ? "cursor" : ""} ${i.flag === -1 ? "rejected" : ""}`}
+                    onClick={(e) => clickTile(i, e)}>
+                    <span className={`tick ${on ? "on" : ""}`} title="Select" onClick={(e) => { e.stopPropagation(); setCursor(i.id); toggle(i.id, e); }}>{on ? "✓" : ""}</span>
+                    <span className="hover-info">{dateTimeLabel(i.taken_at)}</span>
+                    {i.has_exact_duplicate && <span className="dup">Copy</span>}
+                    {i.edited && <span className="edited">Edited</span>}
+                    {(i.rating > 0 || i.flag !== 0) && (
+                      <span className="meta">
+                        {i.flag === 1 && <span className="flag pick">Pick</span>}
+                        {i.flag === -1 && <span className="flag">Rejected</span>}
+                        {i.rating > 0 && <span className="stars" aria-label={`${i.rating} stars`}>{"★".repeat(i.rating)}</span>}
+                      </span>
+                    )}
+                  </Thumb>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        {shown.length === 0 && <p className="muted">No matches.</p>}
+      </div>
+      {!selecting && (
+        <nav className="scrub" aria-label="Years">
+          {years.map((y) => (
+            <a key={y} href={`#m-${groups.find((g) => g.month.startsWith(y))?.month}`}>{y}</a>
+          ))}
+        </nav>
+      )}
+      {notice && (
+        <div className="toast" role="status">
+          {notice.text}
+          {notice.undo && <button onClick={notice.undo}><u>Undo</u></button>}
+          <button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button>
+        </div>
+      )}
+      {selecting && (
+        <div className="select-bar">
+          <b>{n(selected.size)} selected</b>
+          <span className="muted small" style={{ padding: "0 6px" }}>{formatBytes(selectedBytes)} · 1–5 to rate</span>
+          <button className="btn" onClick={() => flag([...selected], 1)}>Pick · P</button>
+          <button className="btn" onClick={() => hide([...selected])}>Hide · H</button>
+          <button className="btn" onClick={async () => {
+            const ids = [...selected];
+            try {
+              await api.setReference(ids, true);
+              setSelected(new Set());
+              say(`Moved ${n(ids.length)} to Reference › To sort`);
+              onChanged();
+            } catch (e) { onError(String(e)); }
+          }}>Move to Reference</button>
+          <button className="btn" onClick={() => setSelected(new Set(flat.map((i) => i.id)))}>Select all {n(flat.length)}</button>
+          <button className="btn" onClick={() => setSelected(new Set())}>Clear · Esc</button>
+          <button className="btn danger" onClick={() => setConfirming(true)}>Delete…</button>
+        </div>
+      )}
+      {confirming && (
+        <DeleteDialog
+          ids={[...selected]}
+          onClose={() => setConfirming(false)}
+          onError={onError}
+          onDone={(r) => {
+            setSelected(new Set());
+            say(`Binned ${n(r.photos)} photo${r.photos === 1 ? "" : "s"} (${n(r.files)} files, ${formatBytes(r.freed_bytes)})`);
+            onChanged();
+          }}
+        />
+      )}
+      {loupe !== null && loupeIndex >= 0 && (
+        <Loupe
+          items={flat}
+          index={loupeIndex}
+          onIndex={(i) => { setLoupe(flat[i].id); setCursor(flat[i].id); }}
+          onClose={() => { setCursor(loupe); setLoupe(null); }}
+          onEdit={(id) => { setLoupe(null); onEdit(id); }}
+          onRate={(id, r) => rate([id], r)}
+          onFlag={(id, f) => flag([id], f)}
+          onHide={(id) => {
+            const next = flat[loupeIndex + 1] ?? flat[loupeIndex - 1];
+            hide([id]);
+            if (next) setLoupe(next.id); else setLoupe(null);
+          }}
+          sourceName={sourceName}
+        />
+      )}
+    </>
+  );
+}

@@ -4,14 +4,20 @@ One tidy photo and video library from Proton Drive, Google Drive, Google Photos 
 
 ## Status
 
-**Phase 2: read-only catalogue.** Add source folders, scan them, and browse everything in one timeline grouped by month. Nothing on disk is moved or deleted.
+**First full version, ready to test.** Every step from scan to edit is in.
 
-- Reads capture dates from camera data (EXIF), Google Takeout JSON files, then file names, then modified time
-- Fingerprints every file (SHA-256) so exact duplicates are flagged across sources
-- Re-scans only re-read new or changed files
-- The catalogue is a SQLite file in the app's data folder, never inside a synced folder
+- **Sources:** scan Proton Drive, Google Drive, a Google Photos Takeout folder and the NAS as folders. Dates come from camera data (EXIF), Takeout JSON, file names, then modified time.
+- **Duplicates:** exact copies (SHA-256) merge automatically; look-alikes (visual fingerprint) go to a review screen that suggests the best-quality copy.
+- **Organise:** suggests events from busy days, previews the new `Photos/YYYY/YYYY-MM Event/` structure, then copies to the library and the backup mirror, checking every file.
+- **Clean-up:** once copies are verified, moves originals to each source's Recycle Bin (or a `Safelight bin` folder on network drives). Nothing goes without your OK.
+- **Reference:** screenshots and saved images are kept apart in topics with tags.
+- **Viewer:** full-screen loupe with glass overlays and a filmstrip. The mouse wheel moves to the next photo, Ctrl + wheel zooms at the cursor, double-click toggles fit and 100%.
+- **Rate, flag, hide:** 1–5 stars, Pick (P) and Reject (X), and Hide (H) to keep photos out of the library without touching the files. Hidden photos are listed under Hidden and can be brought back.
+- **Keyboard:** Lightroom-style shortcuts throughout. Press `?` for the full list (kept in `src/shortcuts.ts`).
+- **Look:** graphite panels, white main buttons, amber only for selection and focus. Follows the Windows light or dark setting.
+- **Editor:** light, colour, tone curve, HSL, crop, rotate and presets. Edits are saved separately and originals are never changed; export to JPEG.
 
-Next: duplicate review (phase 3), organise and copy to Proton + NAS (phase 4), clean-up (phase 5), editor (phase 6).
+Not yet: Google Photos Picker API top-ups, RAW editing, Mac build.
 
 ## Run it on Windows
 
@@ -22,7 +28,7 @@ npm install
 npm run tauri dev
 ```
 
-Or download the installer from the latest CI run: **Actions → CI → safelight-windows-installer**.
+Or get an installer: **Actions → CI → Run workflow** on your branch, then download it from **Releases** once the run finishes.
 
 ## Layout
 
