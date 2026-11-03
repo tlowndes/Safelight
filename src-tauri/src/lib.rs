@@ -1,3 +1,4 @@
+mod capture;
 mod shots;
 mod update;
 
@@ -21,6 +22,8 @@ struct AppState {
     cache_dir: PathBuf,
     /// Decoded image the editor is working on, at preview size.
     preview: Arc<Mutex<Option<(i64, image::DynamicImage)>>>,
+    /// Where screenshots and recordings are saved (a library source).
+    captures_root: PathBuf,
     /// Where Windows saves screenshots: Pictures\Screenshots.
     shots_default: String,
     shots_known: shots::Known,
@@ -554,6 +557,8 @@ pub fn run() {
             let db_path = dir.join("catalogue.sqlite");
             let cat = Catalogue::open(&db_path)?;
             cat.set_setting("thumb_cache", &cache_dir.to_string_lossy())?;
+            let captures_root = capture::init(app.handle())?;
+            ensure_captures_source(&cat, &captures_root)?;
             let shots_default = app
                 .path()
                 .picture_dir()
@@ -563,7 +568,7 @@ pub fn run() {
                 .into_owned();
             let shots_known = shots::Known::default();
             shots::start_watcher(app.handle().clone(), db_path.clone(), shots_default.clone(), shots_known.clone());
-            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known });
+            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known, captures_root });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -588,7 +593,17 @@ pub fn run() {
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
-            set_rating, set_flag, set_hidden, hidden_items, view_image,
+            set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
+            capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
+            capture::reveal_in_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
+            capture::db::capture_db_execute, capture::db::capture_db_select,
+            capture::tools::run_tool, capture::tools::tool_available,
+            capture::files::fs_exists, capture::files::fs_mkdirp, capture::files::fs_read_text, capture::files::fs_write_text,
+            capture::files::fs_remove, capture::files::fs_remove_dir, capture::files::fs_trash, capture::files::fs_size, capture::files::fs_list,
+            capture::files::data_size, capture::platform::list_windows,
+            capture::windows::open_region_picker, capture::windows::flash_screen,
+            capture::recorder::rec_start, capture::recorder::rec_toggle_pause, capture::recorder::rec_stop, capture::recorder::rec_status,
+            capture::hotkeys::set_hotkeys,
             shots::shot_info, shots::shot_set, shots::shot_set_api_key, shots::shot_queue, shots::shot_file,
             shots::shot_leave, shots::shot_undo, shots::shot_moves, shots::shot_sort_existing, shots::shot_reread
         ])

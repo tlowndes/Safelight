@@ -1,7 +1,7 @@
 import Updater from "./Updater";
 import { formatBytes, n, Progress, Source, Stats } from "../api";
 
-export type View = "library" | "hidden" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "capture" | "sources";
+export type View = "library" | "hidden" | "screenshots" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "capture" | "sources";
 
 const icons: Record<string, JSX.Element> = {
   library: <path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4" />,
@@ -32,11 +32,11 @@ export function Logo() {
 }
 
 type Props = {
-  view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null;
+  view: View; onView: (v: View) => void; sources: Source[]; stats: Stats | null; thumbs: Progress | null; shotsWaiting: number;
   recording: "idle" | "recording" | "paused"; onShortcuts: () => void;
 };
 
-export default function Sidebar({ view, onView, sources, stats, thumbs, recording, onShortcuts }: Props) {
+export default function Sidebar({ view, onView, sources, stats, thumbs, shotsWaiting, recording, onShortcuts }: Props) {
   const nav = (key: View, label: string, badge?: string | number, attn = false) => (
     <button className={`nav ${view === key ? "on" : ""}`} aria-current={view === key ? "page" : undefined} onClick={() => onView(key)}>
       <svg viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[key]}</svg>
@@ -56,7 +56,7 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, recordin
 
       <div className="sect">Needs a look</div>
       {nav("screenshots", "Screenshots", shotsWaiting ? n(shotsWaiting) : undefined, true)}
-      {nav("duplicates", "Duplicates", stats ? n(stats.exact_duplicate_files) : undefined, true)}
+      {nav("duplicates", "Duplicates", stats ? n(stats.exact_to_review) : undefined, true)}
       {nav("organise", "Organise")}
       {nav("cleanup", "Clean-up")}
 

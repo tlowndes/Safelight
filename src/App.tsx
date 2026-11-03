@@ -112,7 +112,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} recording={cap.rec.status} onShortcuts={() => setKeysOpen(true)} />
+      <Sidebar view={view} onView={setView} sources={sources} stats={stats} thumbs={busy} shotsWaiting={shotsWaiting} recording={cap.rec.status} onShortcuts={() => setKeysOpen(true)} />
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
         {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
