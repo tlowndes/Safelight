@@ -1,5 +1,6 @@
 //! Safelight core: scanning sources, reading capture dates, fingerprinting files, finding
-//! duplicates, planning and copying the organised library, clean-up, reference and editing.
+//! duplicates, planning and copying the organised library, clean-up, reference, editing and
+//! screenshot import rules (from Snapsort).
 //! No UI code lives here, so it can be tested on any platform.
 
 pub mod catalogue;
@@ -11,10 +12,13 @@ pub mod dupes;
 pub mod hash;
 pub mod imaging;
 pub mod media;
+pub mod ocr;
 pub mod organise;
 pub mod plan;
 pub mod reference;
 pub mod scan;
+pub mod screenshots;
+pub mod secret;
 #[cfg(windows)]
 pub mod winshell;
 

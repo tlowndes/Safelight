@@ -39,6 +39,18 @@ export type Edits = {
 };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
+export type ShotSuggestion = {
+  path: string; category: string; app: string | null; title: string; confidence: number; engine: "device" | "claude";
+  date: string; description: string; new_name: string; note: string | null; text: string; found: string;
+};
+export type ShotMove = { id: number; at: string; from: string; to: string; category: string; name: string; engine: string; confidence: number; auto: boolean; undone: boolean };
+export type ShotSettings = {
+  folder: string; destination: string; watch: boolean; reader: "device" | "claude"; claude_model: "best" | "cheapest";
+  has_api_key: boolean; auto_file: boolean; sureness: "careful" | "balanced" | "relaxed"; date_prefix: boolean;
+};
+export type ShotCategory = { id: string; label: string; folder: string };
+export type ShotInfo = { settings: ShotSettings; categories: ShotCategory[]; ocr: boolean; waiting: number };
+export type ShotSettingKey = "folder" | "destination" | "watch" | "reader" | "claude_model" | "auto_file" | "sureness" | "date_prefix";
 export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean };
 
 export const defaultEdits = (): Edits => ({
@@ -104,6 +116,20 @@ export const api = {
   setHidden: (ids: number[], hidden: boolean) => invoke<void>("set_hidden", { ids, hidden }),
   hiddenItems: () => invoke<Item[]>("hidden_items"),
   viewImage: (id: number) => invoke<string>("view_image", { id }),
+
+  shotInfo: () => invoke<ShotInfo>("shot_info"),
+  shotSet: (key: ShotSettingKey, value: string) => invoke<void>("shot_set", { key, value }),
+  shotSetApiKey: (apiKey: string) => invoke<void>("shot_set_api_key", { apiKey }),
+  shotQueue: () => invoke<ShotSuggestion[]>("shot_queue"),
+  shotFile: (path: string, edits: { category?: string; description?: string }) => invoke<ShotMove>("shot_file", { path, edits }),
+  shotLeave: (path: string) => invoke<void>("shot_leave", { path }),
+  shotUndo: (id: number) => invoke<string>("shot_undo", { id }),
+  shotMoves: (query: string | null, limit = 300) => invoke<ShotMove[]>("shot_moves", { query, limit }),
+  shotSortExisting: () => invoke<number>("shot_sort_existing"),
+  shotReread: (path: string, engine: "device" | "claude") => invoke<ShotSuggestion>("shot_reread", { path, engine }),
+  onShotFiled: (cb: (m: ShotMove) => void) => on("shot-filed", cb),
+  onShotQueued: (cb: (s: ShotSuggestion) => void) => on("shot-queued", cb),
+  onShotsProgress: (cb: (p: Progress) => void) => on("shots-progress", cb),
 
   onScanProgress: (cb: (p: Progress) => void) => on("scan-progress", cb),
   onThumbProgress: (cb: (p: Progress) => void) => on("thumb-progress", cb),

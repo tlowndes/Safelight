@@ -11,6 +11,7 @@ One tidy photo and video library from Proton Drive, Google Drive, Google Photos 
 - **Organise:** suggests events from busy days, previews the new `Photos/YYYY/YYYY-MM Event/` structure, then copies to the library and the backup mirror, checking every file.
 - **Clean-up:** once copies are verified, moves originals to each source's Recycle Bin (or a `Safelight bin` folder on network drives). Nothing goes without your OK.
 - **Reference:** screenshots and saved images are kept apart in topics with tags.
+- **Screenshots (from Snapsort):** watches `Pictures\Screenshots`, reads each new screenshot with the OCR built into Windows (or Claude, if you add an API key) and names it by what's in it, e.g. `Design/2026-10-31 Figma – Onboarding flow.png`. When it's sure, it files it and offers Undo; otherwise it waits in **To review** (Enter to file, Del to leave, F2 to rename). **Sort existing** puts older screenshots on the list first. Nothing is deleted, and every move is logged under **Filed** and can be put back.
 - **Viewer:** full-screen loupe with glass overlays and a filmstrip. The mouse wheel moves to the next photo, Ctrl + wheel zooms at the cursor, double-click toggles fit and 100%.
 - **Rate, flag, hide:** 1–5 stars, Pick (P) and Reject (X), and Hide (H) to keep photos out of the library without touching the files. Hidden photos are listed under Hidden and can be brought back.
 - **Keyboard:** Lightroom-style shortcuts throughout. Press `?` for the full list (kept in `src/shortcuts.ts`).
@@ -32,6 +33,6 @@ Or get an installer: **Actions → CI → Run workflow** on your branch, then do
 
 ## Layout
 
-- `crates/safelight-core`: scanning, dates, hashing, catalogue, folder planning (`cargo test -p safelight-core`)
+- `crates/safelight-core`: scanning, dates, hashing, catalogue, folder planning, screenshot rules (`cargo test -p safelight-core`)
 - `src-tauri`: the desktop app shell and the commands the UI calls
 - `src`: React interface

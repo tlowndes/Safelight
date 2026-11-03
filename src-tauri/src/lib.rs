@@ -1,3 +1,4 @@
+mod shots;
 mod update;
 
 use base64::Engine;
@@ -20,6 +21,9 @@ struct AppState {
     cache_dir: PathBuf,
     /// Decoded image the editor is working on, at preview size.
     preview: Arc<Mutex<Option<(i64, image::DynamicImage)>>>,
+    /// Where Windows saves screenshots: Pictures\Screenshots.
+    shots_default: String,
+    shots_known: shots::Known,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -461,7 +465,16 @@ pub fn run() {
             let db_path = dir.join("catalogue.sqlite");
             let cat = Catalogue::open(&db_path)?;
             cat.set_setting("thumb_cache", &cache_dir.to_string_lossy())?;
-            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)) });
+            let shots_default = app
+                .path()
+                .picture_dir()
+                .map(|p| p.join("Screenshots"))
+                .unwrap_or_else(|_| PathBuf::from("Screenshots"))
+                .to_string_lossy()
+                .into_owned();
+            let shots_known = shots::Known::default();
+            shots::start_watcher(app.handle().clone(), db_path.clone(), shots_default.clone(), shots_known.clone());
+            app.manage(AppState { db_path, cache_dir, preview: Arc::new(Mutex::new(None)), shots_default, shots_known });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -472,7 +485,9 @@ pub fn run() {
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
-            set_rating, set_flag, set_hidden, hidden_items, view_image
+            set_rating, set_flag, set_hidden, hidden_items, view_image,
+            shots::shot_info, shots::shot_set, shots::shot_set_api_key, shots::shot_queue, shots::shot_file,
+            shots::shot_leave, shots::shot_undo, shots::shot_moves, shots::shot_sort_existing, shots::shot_reread
         ])
         .run(tauri::generate_context!())
         .expect("error while running Safelight");

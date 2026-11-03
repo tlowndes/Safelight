@@ -59,6 +59,18 @@ export const SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    name: "Screenshots",
+    items: [
+      { does: "File it", keys: ["Enter"], where: "To review" },
+      { does: "Leave it where it is", keys: ["Delete"], where: "To review" },
+      { does: "Rename", keys: ["F2"], where: "To review" },
+      { does: "Choose a folder", keys: ["1–7"], where: "To review" },
+      { does: "Next / previous screenshot", keys: ["↓", "/", "↑"], where: "To review" },
+      { does: "Preview", keys: ["Space"], where: "To review" },
+      { does: "Put back the last one filed", keys: ["Ctrl", "Z"], where: "Screenshots" },
+    ],
+  },
+  {
     name: "General",
     items: [
       { does: "Search", keys: ["Ctrl", "K"] },
