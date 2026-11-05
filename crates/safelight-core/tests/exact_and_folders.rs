@@ -127,3 +127,21 @@ fn folder_tree_counts_and_filters() {
     let tree = folders::folder_tree(&cat).unwrap();
     assert!(!tree.iter().any(|n| n.source_id == gid && n.path == "Camera"));
 }
+
+#[test]
+fn folder_of_finds_the_tree_folder_for_a_photo() {
+    let (_d, cat, gid, pid) = setup();
+    let of = |name: &str, src: i64| {
+        let item = all(&cat).into_iter().find(|i| i.source_id == src && i.path.ends_with(name)).unwrap();
+        folders::folder_of(&cat, item.id).unwrap()
+    };
+    let deep = of("IMG_20240614_183205.jpg", gid).unwrap();
+    assert_eq!((deep.source_id, deep.path.as_str()), (gid, "Camera/2024"));
+    let top = of("IMG_20240701_120000.jpg", gid).unwrap();
+    assert_eq!(top.path, "", "a photo at the top of a source opens the source itself");
+    // The folder it names is one the tree lists.
+    let tree = folders::folder_tree(&cat).unwrap();
+    assert!(tree.iter().any(|n| n.source_id == gid && n.path == deep.path));
+    assert_eq!(folders::folder_of(&cat, 999_999).unwrap(), None);
+    let _ = pid;
+}

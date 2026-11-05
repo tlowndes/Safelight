@@ -65,6 +65,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
   const [loupe, setLoupe] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<{ text: string; undo?: () => void } | null>(null);
+  /** Right-click menu on a tile. */
+  const [menu, setMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
   const anchor = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -149,6 +151,23 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
     } catch (e) { onError(String(e)); }
   };
 
+  /** Open the folder tree at the folder this photo is in, with the photo focused. */
+  const showInFolder = async (item: Item) => {
+    try {
+      const f = await api.itemFolder(item.id);
+      if (!f) return say("This photo isn't inside any folder Safelight knows about.");
+      setLoupe(null);
+      setSimilar(null);
+      setFilter("all");
+      if (query) setQuery("");
+      setSelected(new Set());
+      setShowFolders(true);
+      setFolder(f);
+      setCursor(item.id);
+    } catch (e) { onError(String(e)); }
+  };
+  const showInExplorer = (item: Item) => api.revealInExplorer(item.path).catch((e) => onError(String(e)));
+
   const toggle = (id: number, e?: React.MouseEvent) => {
     const next = new Set(selected);
     if (e?.shiftKey && anchor.current !== null) {
@@ -200,7 +219,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
   useEffect(() => {
     if (cursor === null || loupe !== null) return;
     gridRef.current?.querySelector(`[data-id="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor, loupe]);
+  }, [cursor, loupe, folderGroups]);
 
   useEffect(() => {
     if (loupe !== null) return;
@@ -210,7 +229,9 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       const ctrl = e.ctrlKey || e.metaKey;
       const at = indexOf(cursor);
       const move = (id: number | undefined) => { if (id !== undefined) { setCursor(id); e.preventDefault(); } };
-      if (k === "Escape") setSelected(new Set());
+      const focused = at >= 0 ? flat[at] : undefined;
+      if (k === "Escape") { setMenu(null); setSelected(new Set()); }
+      else if ((k === "r" || k === "R") && ctrl && focused) { e.preventDefault(); showInExplorer(focused); }
       else if ((k === "Delete" || k === "Backspace") && selecting) setConfirming(true);
       else if (k === "a" && ctrl) { e.preventDefault(); setSelected(new Set(flat.map((i) => i.id))); }
       else if (ctrl) return;
@@ -228,6 +249,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       else if (k === "x" || k === "X") flag(targets(), -1);
       else if (k === "u" || k === "U") flag(targets(), 0);
       else if (k === "h" || k === "H") hide(targets());
+      else if ((k === "f" || k === "F") && e.shiftKey && focused) showInFolder(focused);
       else if (k === "f" || k === "F") setShowFolders((v) => !v);
     };
     window.addEventListener("keydown", onKey);
@@ -312,7 +334,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
                 const on = selected.has(i.id);
                 return (
                   <Thumb key={i.id} item={i} className={`${on ? "picked" : ""} ${cursor === i.id ? "cursor" : ""} ${i.flag === -1 ? "rejected" : ""}`}
-                    onClick={(e) => clickTile(i, e)}>
+                    onClick={(e) => clickTile(i, e)}
+                    onContextMenu={(e) => { e.preventDefault(); setCursor(i.id); setMenu({ item: i, x: e.clientX, y: e.clientY }); }}>
                     <span className={`tick ${on ? "on" : ""}`} title="Select" onClick={(e) => { e.stopPropagation(); setCursor(i.id); toggle(i.id, e); }}>{on ? "✓" : ""}</span>
                     <span className="hover-info">{dateTimeLabel(i.taken_at)}</span>
                     {i.has_exact_duplicate && <span className="dup">Copy</span>}
@@ -339,6 +362,19 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
             <a key={y} href={`#m-${groups.find((g) => g.month.startsWith(y))?.month}`}>{y}</a>
           ))}
         </nav>
+      )}
+      {menu && (
+        <>
+          <div className="menu-scrim" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div className="menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 200) }}>
+            <button role="menuitem" onClick={() => { setMenu(null); showInFolder(menu.item); }}>Show in folder tree<kbd>Shift F</kbd></button>
+            <button role="menuitem" onClick={() => { setMenu(null); showInExplorer(menu.item); }}>Show in Explorer<kbd>Ctrl R</kbd></button>
+            <hr />
+            <button role="menuitem" onClick={() => { setMenu(null); setLoupe(menu.item.id); }}>Open in loupe<kbd>E</kbd></button>
+            {menu.item.kind === "photo" && <button role="menuitem" onClick={() => { setMenu(null); onEdit(menu.item.id); }}>Edit<kbd>D</kbd></button>}
+            {smartReady && <button role="menuitem" onClick={() => { setMenu(null); showSimilar(menu.item); }}>Find similar photos</button>}
+          </div>
+        </>
       )}
       {notice && (
         <div className="toast" role="status">
@@ -396,6 +432,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           sourceName={sourceName}
           onSimilar={smartReady ? showSimilar : undefined}
           onSearch={(q) => { setLoupe(null); setSimilar(null); setQuery(q); }}
+          onShowInFolder={showInFolder}
+          onShowInExplorer={showInExplorer}
         />
       )}
     </>

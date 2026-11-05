@@ -94,6 +94,10 @@ export const api = {
   stats: () => invoke<Stats>("stats"),
   library: (limit = 3000, folder: FolderRef | null = null) => invoke<MonthGroup[]>("library", { limit, folder }),
   folderTree: () => invoke<FolderNode[]>("folder_tree"),
+  /** The folder-tree folder a photo sits in. */
+  itemFolder: (id: number) => invoke<FolderRef | null>("item_folder", { id }),
+  /** Open Windows Explorer with the file selected. */
+  revealInExplorer: (path: string) => invoke<void>("reveal_in_folder", { path }),
   item: (id: number) => invoke<Item | null>("item", { id }),
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),

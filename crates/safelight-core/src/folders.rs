@@ -5,7 +5,7 @@ use crate::{catalogue::Catalogue, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    path::{Component, PathBuf, MAIN_SEPARATOR},
+    path::{Component, Path, PathBuf, MAIN_SEPARATOR},
 };
 
 /// A folder inside a source. `path` is relative to the source's root, with "/" between parts;
@@ -41,18 +41,7 @@ pub fn folder_tree(cat: &Catalogue) -> Result<Vec<FolderNode>> {
         for path in st.query_map([src.id], |r| r.get::<_, String>(0))? {
             let path = PathBuf::from(path?);
             total += 1;
-            let Ok(rel) = path.strip_prefix(&root) else { continue };
-            let parts: Vec<String> = rel
-                .parent()
-                .map(|p| {
-                    p.components()
-                        .filter_map(|c| match c {
-                            Component::Normal(s) => Some(s.to_string_lossy().to_string()),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let Some(parts) = folder_parts(&root, &path) else { continue };
             for d in 1..=parts.len() {
                 *counts.entry(parts[..d].join("/")).or_default() += 1;
             }
@@ -91,4 +80,31 @@ pub(crate) fn prefix(cat: &Catalogue, folder: &FolderRef) -> Result<String> {
         s.push(MAIN_SEPARATOR);
     }
     Ok(s)
+}
+
+/// The folders between a source's root and the file, outermost first. None if the file
+/// isn't under the root.
+fn folder_parts(root: &Path, file: &Path) -> Option<Vec<String>> {
+    let rel = file.strip_prefix(root).ok()?;
+    Some(
+        rel.parent()
+            .map(|p| {
+                p.components()
+                    .filter_map(|c| match c {
+                        Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+/// The folder-tree folder a library item sits in, so the app can jump straight to it.
+/// None if the item has gone, or lives outside its source's root.
+pub fn folder_of(cat: &Catalogue, item_id: i64) -> Result<Option<FolderRef>> {
+    let Some(item) = cat.item(item_id)? else { return Ok(None) };
+    let Some(root) = cat.source_root(item.source_id)? else { return Ok(None) };
+    Ok(folder_parts(Path::new(&root), Path::new(&item.path))
+        .map(|parts| FolderRef { source_id: item.source_id, path: parts.join("/") }))
 }

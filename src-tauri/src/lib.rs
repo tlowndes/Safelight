@@ -145,6 +145,11 @@ async fn folder_tree(state: State<'_, AppState>) -> CmdResult<Vec<folders::Folde
 }
 
 #[tauri::command]
+async fn item_folder(state: State<'_, AppState>, id: i64) -> CmdResult<Option<folders::FolderRef>> {
+    with_db!(state, |cat| folders::folder_of(&cat, id))
+}
+
+#[tauri::command]
 async fn item(state: State<'_, AppState>, id: i64) -> CmdResult<Option<Item>> {
     with_db!(state, |cat| cat.item(id))
 }
@@ -850,7 +855,7 @@ pub fn run() {
             load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
             set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
             capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
-            capture::reveal_in_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
+            capture::reveal_in_folder, item_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
             capture::db::capture_db_execute, capture::db::capture_db_select,
             capture::tools::run_tool, capture::tools::tool_available,
             capture::files::fs_exists, capture::files::fs_mkdirp, capture::files::fs_read_text, capture::files::fs_write_text,

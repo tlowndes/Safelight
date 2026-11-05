@@ -12,6 +12,8 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Move the focus", keys: ["↑", "↓", "←", "→"], where: "Grid" },
       { does: "Grid", keys: ["G"] },
       { does: "Show or hide the folder tree", keys: ["F"], where: "Grid" },
+      { does: "Show the photo in the folder tree", keys: ["Shift", "F"] },
+      { does: "Show the photo in Explorer", keys: ["Ctrl", "R"] },
       { does: "Loupe (full screen)", keys: ["E"] },
       { does: "Open in the editor", keys: ["D"] },
       { does: "First / last", keys: ["Home", "/", "End"] },

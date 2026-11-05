@@ -16,6 +16,10 @@ type Props = {
   onSimilar?: (item: Item) => void;
   /** Search the library for a person, place or tag. */
   onSearch?: (q: string) => void;
+  /** Close the viewer and open the folder tree at this photo's folder. */
+  onShowInFolder: (item: Item) => void;
+  /** Open Windows Explorer with the file selected. */
+  onShowInExplorer: (item: Item) => void;
 };
 
 /** Scale and top-left offset of the picture inside the stage. `fit` = scaled to fit. */
@@ -24,7 +28,7 @@ type View = { s: number; x: number; y: number; fit: boolean };
 const MAX_ZOOM = 8;
 const DATE_FROM: Record<string, string> = { exif: "from camera data", takeout: "from Google Takeout", filename: "from the file name", mtime: "from the file's modified time" };
 
-export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, sourceName, onSimilar, onSearch }: Props) {
+export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, sourceName, onSimilar, onSearch, onShowInFolder, onShowInExplorer }: Props) {
   const item = items[index];
   const stage = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLImageElement & HTMLVideoElement>(null);
@@ -153,12 +157,14 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
       if (ctrl && (k === "=" || k === "+")) zoomTo((view.fit ? fitView().s : view.s) * 1.25);
       else if (ctrl && (k === "-" || k === "_")) zoomTo((view.fit ? fitView().s : view.s) / 1.25);
       else if (ctrl && k === "0") setView(fitView());
+      else if (ctrl && (k === "r" || k === "R")) onShowInExplorer(item);
       else if (ctrl) used = false;
       else if (k === "ArrowRight" || k === "ArrowDown") go(1);
       else if (k === "ArrowLeft" || k === "ArrowUp") go(-1);
       else if (k === "Home") onIndex(0);
       else if (k === "End") onIndex(items.length - 1);
       else if (k === "Escape" || k === "g" || k === "G") onClose();
+      else if ((k === "f" || k === "F") && e.shiftKey) onShowInFolder(item);
       else if ((k === "d" || k === "D") && item.kind === "photo") onEdit(item.id);
       else if (k === "z" || k === "Z") toggleZoom();
       else if (k === "i" || k === "I") setInfo((v) => !v);
@@ -235,6 +241,9 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
           <button aria-label="Fit or 100% (Z)" title="Fit / 100% (Z)" onClick={() => toggleZoom()}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
           </button>
+          <button aria-label="Show in folder tree (Shift+F)" title="Show in folder tree (Shift+F)" onClick={() => onShowInFolder(item)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z" /><path d="M10 13.5h6M13.5 11l2.5 2.5-2.5 2.5" /></svg>
+          </button>
           <button aria-label="Hide from library (H)" title="Hide from library (H)" onClick={() => onHide(item.id)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-3 4.1M6.6 6.6A13 13 0 0 0 2 12c1 2.5 5 7 10 7a9.8 9.8 0 0 0 4.4-1M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg>
           </button>
@@ -263,7 +272,16 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
           <dl>
             <dt>File</dt><dd>{fileExt(item.path)}{item.width && item.height ? ` · ${item.width} × ${item.height}` : ""} · {formatBytes(item.size)}</dd>
             <dt>Source</dt><dd>{sourceName(item.source_id)}</dd>
-            <dt>Folder</dt><dd>{item.path.slice(0, Math.max(0, item.path.length - fileName(item.path).length - 1))}</dd>
+            <dt>Folder</dt>
+            <dd>
+              <button className="path-link" title="Show in folder tree (Shift+F)" onClick={() => onShowInFolder(item)}>
+                {item.path.slice(0, Math.max(0, item.path.length - fileName(item.path).length - 1))}
+              </button>
+              <span className="path-actions">
+                <button className="link" onClick={() => onShowInFolder(item)}>Show in folder tree</button>
+                <button className="link" onClick={() => onShowInExplorer(item)}>Show in Explorer</button>
+              </span>
+            </dd>
             <dt>Fingerprint</dt><dd className="mono-text" title={item.sha256}>{item.sha256.slice(0, 8)}…{item.sha256.slice(-8)}</dd>
           </dl>
           {smart && (smart.people.length > 0 || smart.faces > 0 || smart.place || smart.tags.length > 0 || onSimilar) && (
