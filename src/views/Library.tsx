@@ -3,6 +3,8 @@ import { api, dateTimeLabel, fileName, FolderNode, FolderRef, formatBytes, Item,
 import Thumb from "../components/Thumb";
 import FolderTree from "../components/FolderTree";
 import DeleteDialog from "../components/DeleteDialog";
+import ExportDialog from "../components/ExportDialog";
+import { useCopiedEdits } from "../editClipboard";
 import Loupe from "./Loupe";
 import { isTyping } from "../shortcuts";
 
@@ -65,7 +67,11 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
   const [loupe, setLoupe] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number[] | null>(null);
   const confirming = deleting !== null;
+  const [exportIds, setExportIds] = useState<number[] | null>(null);
+  const copied = useCopiedEdits();
   const [notice, setNotice] = useState<{ text: string; undo?: () => void } | null>(null);
+  /** Right-click menu on a tile. */
+  const [menu, setMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
   const anchor = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -150,6 +156,38 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
     } catch (e) { onError(String(e)); }
   };
 
+  /** Open the folder tree at the folder this photo is in, with the photo focused. */
+  const showInFolder = async (item: Item) => {
+    try {
+      const f = await api.itemFolder(item.id);
+      if (!f) return say("This photo isn't inside any folder Safelight knows about.");
+      setLoupe(null);
+      setSimilar(null);
+      setFilter("all");
+      if (query) setQuery("");
+      setSelected(new Set());
+      setShowFolders(true);
+      setFolder(f);
+      setCursor(item.id);
+    } catch (e) { onError(String(e)); }
+  };
+  const showInExplorer = (item: Item) => api.revealInExplorer(item.path).catch((e) => onError(String(e)));
+
+  /** Paste the copied look onto photos, each keeping its own crop. Undoable. */
+  const pasteEdits = async (ids: number[]) => {
+    const photos = ids.filter((id) => flat.find((i) => i.id === id)?.kind === "photo");
+    if (!copied || !photos.length) return;
+    try {
+      const before = await api.pasteLook(photos, copied);
+      onChanged();
+      say(`Pasted settings onto ${n(photos.length)} photo${photos.length === 1 ? "" : "s"}`, async () => {
+        await api.restoreEdits(before);
+        setNotice(null);
+        onChanged();
+      });
+    } catch (e) { onError(String(e)); }
+  };
+
   const toggle = (id: number, e?: React.MouseEvent) => {
     const next = new Set(selected);
     if (e?.shiftKey && anchor.current !== null) {
@@ -201,20 +239,24 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
   useEffect(() => {
     if (cursor === null || loupe !== null) return;
     gridRef.current?.querySelector(`[data-id="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor, loupe]);
+  }, [cursor, loupe, folderGroups]);
 
   useEffect(() => {
     if (loupe !== null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e) || confirming) return;
+      if (isTyping(e) || confirming || exportIds) return;
       const k = e.key;
       const ctrl = e.ctrlKey || e.metaKey;
       const at = indexOf(cursor);
       const move = (id: number | undefined) => { if (id !== undefined) { setCursor(id); e.preventDefault(); } };
-      if (k === "Escape") setSelected(new Set());
+      const focused = at >= 0 ? flat[at] : undefined;
+      if (k === "Escape") { setMenu(null); setSelected(new Set()); }
+      else if ((k === "r" || k === "R") && ctrl && focused) { e.preventDefault(); showInExplorer(focused); }
       else if ((k === "Delete" || k === "Backspace" || ((k === "d" || k === "D") && !ctrl)) && targets().length) { e.preventDefault(); setDeleting(targets()); }
-      else if ((k === "e" || k === "E") && ctrl) { e.preventDefault(); if (cursor !== null && flat[at]?.kind === "photo") onEdit(cursor); }
+      else if ((k === "e" || k === "E") && ctrl && !e.shiftKey) { e.preventDefault(); if (cursor !== null && flat[at]?.kind === "photo") onEdit(cursor); }
       else if (k === "a" && ctrl) { e.preventDefault(); setSelected(new Set(flat.map((i) => i.id))); }
+      else if ((k === "v" || k === "V") && ctrl && e.shiftKey && targets().length) { e.preventDefault(); pasteEdits(targets()); }
+      else if ((k === "e" || k === "E") && ctrl && e.shiftKey && targets().length) { e.preventDefault(); setExportIds(targets()); }
       else if (ctrl) return;
       else if (k === "ArrowRight") move(flat[Math.min(flat.length - 1, at + 1)]?.id ?? flat[0]?.id);
       else if (k === "ArrowLeft") move(flat[Math.max(0, at - 1)]?.id ?? flat[0]?.id);
@@ -229,6 +271,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       else if (k === "x" || k === "X") flag(targets(), -1);
       else if (k === "u" || k === "U") flag(targets(), 0);
       else if (k === "h" || k === "H") hide(targets());
+      else if ((k === "f" || k === "F") && e.shiftKey && focused) showInFolder(focused);
       else if (k === "f" || k === "F") setShowFolders((v) => !v);
     };
     window.addEventListener("keydown", onKey);
@@ -313,7 +356,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
                 const on = selected.has(i.id);
                 return (
                   <Thumb key={i.id} item={i} className={`${on ? "picked" : ""} ${cursor === i.id ? "cursor" : ""} ${i.flag === -1 ? "rejected" : ""}`}
-                    onClick={(e) => clickTile(i, e)}>
+                    onClick={(e) => clickTile(i, e)}
+                    onContextMenu={(e) => { e.preventDefault(); setCursor(i.id); setMenu({ item: i, x: e.clientX, y: e.clientY }); }}>
                     <span className={`tick ${on ? "on" : ""}`} title="Select" onClick={(e) => { e.stopPropagation(); setCursor(i.id); toggle(i.id, e); }}>{on ? "✓" : ""}</span>
                     <span className="hover-info">{dateTimeLabel(i.taken_at)}</span>
                     {i.has_exact_duplicate && <span className="dup">Copy</span>}
@@ -341,6 +385,28 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           ))}
         </nav>
       )}
+      {menu && (
+        <>
+          <div className="menu-scrim" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div className="menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 200) }}>
+            <button role="menuitem" onClick={() => { setMenu(null); showInFolder(menu.item); }}>Show in folder tree<kbd>Shift F</kbd></button>
+            <button role="menuitem" onClick={() => { setMenu(null); showInExplorer(menu.item); }}>Show in Explorer<kbd>Ctrl R</kbd></button>
+            <hr />
+            <button role="menuitem" onClick={() => { setMenu(null); setLoupe(menu.item.id); }}>Open in loupe<kbd>E</kbd></button>
+            {menu.item.kind === "photo" && <button role="menuitem" onClick={() => { setMenu(null); onEdit(menu.item.id); }}>Edit<kbd>Ctrl E</kbd></button>}
+            {smartReady && <button role="menuitem" onClick={() => { setMenu(null); showSimilar(menu.item); }}>Find similar photos</button>}
+            <hr />
+            {copied && menu.item.kind === "photo" && (
+              <button role="menuitem" onClick={() => { setMenu(null); pasteEdits(selected.has(menu.item.id) ? [...selected] : [menu.item.id]); }}>
+                Paste settings{selected.has(menu.item.id) && selected.size > 1 ? ` to ${n(selected.size)}` : ""}<kbd>Ctrl Shift V</kbd>
+              </button>
+            )}
+            <button role="menuitem" onClick={() => { setMenu(null); setExportIds(selected.has(menu.item.id) ? [...selected] : [menu.item.id]); }}>
+              Export{selected.has(menu.item.id) && selected.size > 1 ? ` ${n(selected.size)}` : ""}…<kbd>Ctrl Shift E</kbd>
+            </button>
+          </div>
+        </>
+      )}
       {notice && (
         <div className="toast" role="status">
           {notice.text}
@@ -354,6 +420,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           <span className="muted small" style={{ padding: "0 6px" }}>{formatBytes(selectedBytes)} · 1–5 to rate</span>
           <button className="btn" onClick={() => flag([...selected], 1)}>Pick · P</button>
           <button className="btn" onClick={() => hide([...selected])}>Hide · H</button>
+          {copied && <button className="btn" title="Paste copied settings (Ctrl+Shift+V)" onClick={() => pasteEdits([...selected])}>Paste settings</button>}
+          <button className="btn" title="Export (Ctrl+Shift+E)" onClick={() => setExportIds([...selected])}>Export…</button>
           <button className="btn" onClick={async () => {
             const ids = [...selected];
             try {
@@ -368,6 +436,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           <button className="btn danger" onClick={() => setDeleting([...selected])}>Delete · D</button>
         </div>
       )}
+      {exportIds && <ExportDialog ids={exportIds} onClose={() => setExportIds(null)} onError={onError} />}
       {deleting && (
         <DeleteDialog
           ids={deleting}
@@ -410,6 +479,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           sourceName={sourceName}
           onSimilar={smartReady ? showSimilar : undefined}
           onSearch={(q) => { setLoupe(null); setSimilar(null); setQuery(q); }}
+          onShowInFolder={showInFolder}
+          onShowInExplorer={showInExplorer}
         />
       )}
     </>

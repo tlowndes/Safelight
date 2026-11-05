@@ -44,10 +44,15 @@ export type Topic = { id: number; name: string; count: number };
 export type Tag = { id: number; name: string; count: number };
 export type RefItem = { item: Item; tags: string[]; /** suggested by smart tagging */ smart_tags: string[] };
 export type Edits = {
-  exposure: number; contrast: number; highlights: number; shadows: number; temperature: number; tint: number;
-  vibrance: number; saturation: number; curve: [number, number][]; hsl: [number, number, number][];
+  exposure: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number;
+  temperature: number; tint: number; vibrance: number; saturation: number;
+  clarity: number; dehaze: number; sharpening: number; noise: number; vignette: number; curve: [number, number][]; hsl: [number, number, number][];
   crop: [number, number, number, number] | null; rotate: number;
 };
+export type ExportFormat = "jpeg" | "png" | "tiff";
+export type ExportNaming = "original" | "suffix" | "date_number";
+export type ExportOptions = { folder: string; format: ExportFormat; quality: number; max_edge: number | null; naming: ExportNaming };
+export type ExportReport = { exported: number; files: string[]; errors: string[] };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
 export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean; smart_tagging: boolean; confirm_delete: boolean };
@@ -81,7 +86,7 @@ export type ShotInfo = { settings: ShotSettings; categories: ShotCategory[]; ocr
 export type ShotSettingKey = "folder" | "destination" | "watch" | "reader" | "claude_model" | "auto_file" | "sureness" | "date_prefix";
 
 export const defaultEdits = (): Edits => ({
-  exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, vibrance: 0, saturation: 0,
+  exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, clarity: 0, dehaze: 0, sharpening: 0, noise: 0, vignette: 0, temperature: 0, tint: 0, vibrance: 0, saturation: 0,
   curve: [], hsl: Array.from({ length: 8 }, () => [0, 0, 0] as [number, number, number]), crop: null, rotate: 0,
 });
 
@@ -94,6 +99,10 @@ export const api = {
   stats: () => invoke<Stats>("stats"),
   library: (limit = 3000, folder: FolderRef | null = null) => invoke<MonthGroup[]>("library", { limit, folder }),
   folderTree: () => invoke<FolderNode[]>("folder_tree"),
+  /** The folder-tree folder a photo sits in. */
+  itemFolder: (id: number) => invoke<FolderRef | null>("item_folder", { id }),
+  /** Open Windows Explorer with the file selected. */
+  revealInExplorer: (path: string) => invoke<void>("reveal_in_folder", { path }),
   item: (id: number) => invoke<Item | null>("item", { id }),
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
@@ -147,6 +156,12 @@ export const api = {
   renderPreview: (id: number, edits: Edits) => invoke<Rendered>("render_preview", { id, edits }),
   exportImage: (id: number, edits: Edits, path: string, maxEdge: number | null) => invoke<string>("export_image", { id, edits, path, maxEdge }),
   presets: () => invoke<Preset[]>("presets"),
+  /** Export photos with their saved edits. */
+  exportItems: (ids: number[], options: ExportOptions) => invoke<ExportReport>("export_items", { ids, options }),
+  onExportProgress: (cb: (p: Progress) => void) => on("export-progress", cb),
+  /** Paste a look onto photos (each keeps its crop). Returns what they had, for undo. */
+  pasteLook: (ids: number[], edits: Edits) => invoke<[number, Edits][]>("paste_look", { ids, edits }),
+  restoreEdits: (edits: [number, Edits][]) => invoke<void>("restore_edits", { edits }),
   savePreset: (name: string, edits: Edits) => invoke<number>("save_preset", { name, edits }),
   deletePreset: (id: number) => invoke<void>("delete_preset", { id }),
 

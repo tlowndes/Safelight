@@ -12,6 +12,8 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Move the focus", keys: ["↑", "↓", "←", "→"], where: "Grid" },
       { does: "Grid", keys: ["G"] },
       { does: "Show or hide the folder tree", keys: ["F"], where: "Grid" },
+      { does: "Show the photo in the folder tree", keys: ["Shift", "F"] },
+      { does: "Show the photo in Explorer", keys: ["Ctrl", "R"] },
       { does: "Loupe (full screen)", keys: ["E"] },
       { does: "Open in the editor", keys: ["Ctrl", "E"] },
       { does: "First / last", keys: ["Home", "/", "End"] },
@@ -50,6 +52,16 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Select a range", keys: ["Shift", "Click"], where: "Grid" },
       { does: "Select all", keys: ["Ctrl", "A"], where: "Grid" },
       { does: "Clear selection", keys: ["Esc"], where: "Grid" },
+    ],
+  },
+  {
+    name: "Edit",
+    items: [
+      { does: "Undo / redo an edit", keys: ["Ctrl", "Z", "/", "Ctrl", "Shift", "Z"], where: "Editor" },
+      { does: "Copy settings", keys: ["Ctrl", "Shift", "C"], where: "Editor" },
+      { does: "Paste settings (onto a selection too)", keys: ["Ctrl", "Shift", "V"] },
+      { does: "Export the selection", keys: ["Ctrl", "Shift", "E"], where: "Grid" },
+      { does: "Reset a slider", keys: ["Double-click"], where: "Editor" },
     ],
   },
   {

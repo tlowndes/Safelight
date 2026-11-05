@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FolderNode, FolderRef, KIND_NAMES, n, Source } from "../api";
 
 type Props = { nodes: FolderNode[]; sources: Source[]; selected: FolderRef | null; onSelect: (f: FolderRef | null) => void };
@@ -26,11 +26,29 @@ export default function FolderTree({ nodes, sources, selected, onSelect }: Props
     next.has(key(f)) ? next.delete(key(f)) : next.add(key(f));
     setFlipped(next);
   };
+  // When a folder is chosen from elsewhere (Show in folder tree), open every folder above it
+  // and scroll it into view. Only once per choice, so folders the user closes stay closed.
+  const navRef = useRef<HTMLElement>(null);
+  const revealed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selected) { revealed.current = null; return; }
+    const k = key(selected);
+    if (revealed.current === k || !byKey.has(k)) return;
+    revealed.current = k;
+    const next = new Set(flipped);
+    for (let p = byKey.get(k); p; p = p.depth > 0 ? byKey.get(parentKey(p)) : undefined) {
+      if (p.path === selected.path) continue;
+      if (p.depth === 0) next.delete(key(p)); else next.add(key(p));
+    }
+    setFlipped(next);
+    requestAnimationFrame(() => navRef.current?.querySelector(".folder.on")?.scrollIntoView({ block: "nearest" }));
+  }, [selected?.source_id, selected?.path, byKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isOn = (f: FolderNode) => selected !== null && selected.source_id === f.source_id && selected.path === f.path;
   const kind = (id: number) => sources.find((s) => s.id === id)?.kind ?? "";
 
   return (
-    <nav className="folders" aria-label="Folders">
+    <nav ref={navRef} className="folders" aria-label="Folders">
       <div className="folders-head">Folders</div>
       <button className={`folder ${selected === null ? "on" : ""}`} onClick={() => onSelect(null)}>
         <span className="twisty" />
