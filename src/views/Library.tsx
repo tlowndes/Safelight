@@ -213,6 +213,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       const move = (id: number | undefined) => { if (id !== undefined) { setCursor(id); e.preventDefault(); } };
       if (k === "Escape") setSelected(new Set());
       else if ((k === "Delete" || k === "Backspace" || ((k === "d" || k === "D") && !ctrl)) && targets().length) { e.preventDefault(); setDeleting(targets()); }
+      else if ((k === "e" || k === "E") && ctrl) { e.preventDefault(); if (cursor !== null && flat[at]?.kind === "photo") onEdit(cursor); }
       else if (k === "a" && ctrl) { e.preventDefault(); setSelected(new Set(flat.map((i) => i.id))); }
       else if (ctrl) return;
       else if (k === "ArrowRight") move(flat[Math.min(flat.length - 1, at + 1)]?.id ?? flat[0]?.id);
@@ -223,7 +224,6 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       else if (k === "End") move(flat[flat.length - 1]?.id);
       else if (k === " " && cursor !== null) { e.preventDefault(); toggle(cursor); }
       else if ((k === "e" || k === "E" || k === "Enter") && (cursor ?? flat[0]?.id) !== undefined) { e.preventDefault(); setLoupe(cursor ?? flat[0].id); }
-      else if ((k === "r" || k === "R") && cursor !== null && flat[at]?.kind === "photo") onEdit(cursor);
       else if (/^[0-5]$/.test(k)) rate(targets(), Number(k));
       else if (k === "p" || k === "P") flag(targets(), 1);
       else if (k === "x" || k === "X") flag(targets(), -1);

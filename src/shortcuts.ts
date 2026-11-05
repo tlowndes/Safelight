@@ -13,7 +13,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Grid", keys: ["G"] },
       { does: "Show or hide the folder tree", keys: ["F"], where: "Grid" },
       { does: "Loupe (full screen)", keys: ["E"] },
-      { does: "Open in the editor", keys: ["R"] },
+      { does: "Open in the editor", keys: ["Ctrl", "E"] },
       { does: "First / last", keys: ["Home", "/", "End"] },
       { does: "Play or pause a video", keys: ["Space"], where: "Loupe" },
       { does: "Show or hide photo details", keys: ["I"], where: "Loupe" },
