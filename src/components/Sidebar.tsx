@@ -1,7 +1,7 @@
 import Updater from "./Updater";
 import { formatBytes, n, Progress, Source, Stats } from "../api";
 
-export type View = "library" | "people" | "hidden" | "screenshots" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "capture" | "sources";
+export type View = "library" | "people" | "hidden" | "screenshots" | "duplicates" | "organise" | "cleanup" | "reference" | "edit" | "capture" | "sources" | "map" | "import";
 
 const icons: Record<string, JSX.Element> = {
   library: <path d="M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4" />,
@@ -13,6 +13,8 @@ const icons: Record<string, JSX.Element> = {
   reference: <path d="M6 3h12v18l-6-4-6 4z" />,
   screenshots: <><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><path d="M9 12h6M9 15h4M9 9h6" /></>,
   edit: <><circle cx="12" cy="12" r="3" /><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /></>,
+  map: <><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z" /><path d="M9 4v14M15 6v14" /></>,
+  import: <><path d="M12 3v12M7 10l5 5 5-5" /><path d="M4 17v3h16v-3" /></>,
   capture: <><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 
@@ -54,7 +56,9 @@ export default function Sidebar({ view, onView, sources, stats, thumbs, shotsWai
       {nav("people", "People & places", people ? n(people) : undefined)}
       {nav("hidden", "Hidden", stats ? n(stats.hidden) : undefined)}
       {nav("reference", "Reference", stats ? n(stats.reference) : undefined)}
+      {nav("map", "Map")}
       {nav("edit", "Edit")}
+      {nav("import", "Import")}
       {nav("capture", "Capture", recording === "recording" ? "Recording" : recording === "paused" ? "Paused" : undefined, recording !== "idle")}
 
       <div className="sect">Needs a look</div>

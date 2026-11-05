@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, dateTimeLabel, defaultEdits, Edits, fileName, Item, MonthGroup, Preset, Rendered } from "../api";
+import { api, dateTimeLabel, defaultEdits, Edits, fileName, Item, Mask, MonthGroup, Preset, Rendered, Spot, Version } from "../api";
+import EditOverlay from "../components/EditOverlay";
 import Thumb from "../components/Thumb";
 import DeleteDialog from "../components/DeleteDialog";
 import ExportDialog from "../components/ExportDialog";
@@ -38,6 +39,28 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
   const inflight = useRef(false);
   const pending = useRef<Edits | null>(null);
   const loaded = useRef<number | null>(null);
+  /** Spot healing or masks: what clicks on the picture do. */
+  const [tool, setTool] = useState<"none" | "heal" | "mask">("none");
+  const [picked, setPicked] = useState<number | null>(null);
+  const [brush, setBrush] = useState(0.02);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const measure = () => {
+    const im = imgRef.current;
+    if (im) setBox({ left: im.offsetLeft, top: im.offsetTop, width: im.offsetWidth, height: im.offsetHeight });
+  };
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  const loadVersions = () => { if (itemId !== null) api.versions(itemId).then(setVersions).catch(() => setVersions([])); };
+  useEffect(() => { setPicked(null); loadVersions(); }, [itemId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setPicked(null), [tool]);
 
   useEffect(() => { api.presets().then(setPresets).catch((e) => onError(String(e))); }, []);
 
@@ -46,10 +69,14 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e) || deleting || exporting || itemId === null || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "d" || e.key === "D") { e.preventDefault(); setDeleting(true); }
+      else if (e.key === "q" || e.key === "Q") setTool((t) => (t === "heal" ? "none" : "heal"));
+      else if (e.key === "m" || e.key === "M") setTool((t) => (t === "mask" ? "none" : "mask"));
+      else if (e.key === "Escape" && tool !== "none") setTool("none");
+      else if ((e.key === "Delete" || e.key === "Backspace") && picked !== null) { e.preventDefault(); removePicked(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleting, exporting, itemId]);
+  });
 
   // Load the photo and its saved edits.
   useEffect(() => {
@@ -133,7 +160,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
   };
   const undo = () => goTo(hist.pos - 1);
   const redo = () => goTo(hist.pos + 1);
-  const paste = () => clipboard && update({ ...defaultEdits(), ...clipboard, crop: edits.crop, rotate: edits.rotate }, "Paste settings");
+  const paste = () => clipboard && update({ ...defaultEdits(), ...clipboard, crop: edits.crop, rotate: edits.rotate, straighten: edits.straighten, spots: edits.spots }, "Paste settings");
   const copy = () => { copyEdits(edits); setStatus("Settings copied. Paste them here or onto a selection in the library."); };
 
   useEffect(() => {
@@ -154,7 +181,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
 
   const toggleBefore = async (on: boolean) => {
     setShowBefore(on);
-    if (on && !before && itemId !== null) setBefore(await api.renderPreview(itemId, { ...defaultEdits(), rotate: edits.rotate, crop: edits.crop }));
+    if (on && !before && itemId !== null) setBefore(await api.renderPreview(itemId, { ...defaultEdits(), rotate: edits.rotate, straighten: edits.straighten, crop: edits.crop }));
   };
 
   const setCrop = (label: string, ratio: number | null) => {
@@ -167,6 +194,65 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
     // Largest centred rectangle with the chosen shape.
     const crop: [number, number, number, number] = ratio > current ? [0, (1 - current / ratio) / 2, 1, current / ratio] : [(1 - ratio / current) / 2, 0, ratio / current, 1];
     update({ crop }, `Crop ${label}`);
+  };
+
+  const addSpot = async (x: number, y: number) => {
+    if (itemId === null) return;
+    const r = brush;
+    try {
+      const [sx, sy] = await api.spotSource(itemId, edits, x, y, r);
+      const spots = [...edits.spots, { x, y, r, sx, sy }];
+      update({ spots }, "Spot removal");
+      setPicked(spots.length - 1);
+    } catch (e) { onError(String(e)); }
+  };
+  const setSpot = (i: number, sp: Spot) => update({ spots: edits.spots.map((s, k) => (k === i ? sp : s)) }, "Move spot", `spot-${i}`);
+  const addMask = (kind: "radial" | "linear") => {
+    const [cx, cy, cw, ch] = edits.crop ?? [0, 0, 1, 1];
+    const m: Mask = {
+      kind, feather: 50, invert: false, exposure: 0, contrast: 0, highlights: 0, shadows: 0, saturation: 0, temperature: 0,
+      ...(kind === "radial"
+        ? { x1: cx + cw / 2, y1: cy + ch / 2, x2: cw / 4, y2: ch / 4 }
+        : { x1: cx + cw / 2, y1: cy + ch * 0.15, x2: cx + cw / 2, y2: cy + ch * 0.55 }),
+    };
+    const masks = [...edits.masks, m];
+    update({ masks }, kind === "radial" ? "Radial mask" : "Linear mask");
+    setTool("mask");
+    setPicked(masks.length - 1);
+  };
+  const setMask = (i: number, m: Mask, label = "Move mask", key = `mask-${i}`) => update({ masks: edits.masks.map((x, k) => (k === i ? m : x)) }, label, key);
+  const removePicked = () => {
+    if (picked === null) return;
+    if (tool === "heal") update({ spots: edits.spots.filter((_, k) => k !== picked) }, "Remove spot");
+    else if (tool === "mask") update({ masks: edits.masks.filter((_, k) => k !== picked) }, "Remove mask");
+    setPicked(null);
+  };
+
+  /** Switch to another virtual copy, saving the one being edited first. */
+  const switchTo = async (v: Version) => {
+    if (itemId === null || v.active || v.id === null) return;
+    try {
+      await api.saveEdits(itemId, edits);
+      const e = await api.switchVersion(itemId, v.id);
+      setEdits(e);
+      render(e);
+      setAspect(e.crop ? "Custom" : "Original");
+      const h = { steps: [{ key: "open", label: `Switched to ${v.name}`, edits: e, at: 0 }], pos: 0 };
+      setHist(h);
+      histories.set(itemId, h);
+      loadVersions();
+      onChanged();
+    } catch (x) { onError(String(x)); }
+  };
+  const newCopy = async () => {
+    if (itemId === null) return;
+    try {
+      await api.saveEdits(itemId, edits);
+      const name = await api.newVersion(itemId);
+      setStatus(`Made a virtual copy, ${name}. Edit it freely: the other versions stay as they are.`);
+      loadVersions();
+      onChanged();
+    } catch (x) { onError(String(x)); }
   };
 
   if (itemId === null) {
@@ -214,6 +300,11 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
         <span className="muted">{item?.taken_at ? dateTimeLabel(item.taken_at) : ""} ›</span>
         <b>{item ? fileName(item.path) : ""}</b>
         <div className="row" style={{ marginLeft: "auto" }}>
+          <div className="seg text" role="group" aria-label="Tools">
+            <button className={tool === "none" ? "on" : ""} onClick={() => setTool("none")}>Adjust</button>
+            <button className={tool === "heal" ? "on" : ""} title="Spot removal (Q)" onClick={() => setTool(tool === "heal" ? "none" : "heal")}>Heal · Q</button>
+            <button className={tool === "mask" ? "on" : ""} title="Masks (M)" onClick={() => setTool(tool === "mask" ? "none" : "mask")}>Masks · M</button>
+          </div>
           <button className="btn" onMouseDown={() => toggleBefore(true)} onMouseUp={() => toggleBefore(false)} onMouseLeave={() => showBefore && toggleBefore(false)}>Hold for before</button>
           <div className="seg" role="group" aria-label="Undo and redo">
             <button aria-label="Undo (Ctrl+Z)" title="Undo (Ctrl+Z)" disabled={hist.pos <= 0} onClick={undo}>
@@ -251,7 +342,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           <div className="label">Presets</div>
           {presets.map((p) => (
             <div key={p.id} className="preset-row">
-              <button className="preset" onClick={() => update({ ...defaultEdits(), ...p.edits, crop: edits.crop, rotate: edits.rotate }, `Preset: ${p.name}`)}>{p.name}</button>
+              <button className="preset" onClick={() => update({ ...defaultEdits(), ...p.edits, crop: edits.crop, rotate: edits.rotate, straighten: edits.straighten, spots: edits.spots, masks: edits.masks }, `Preset: ${p.name}`)}>{p.name}</button>
               <button className="x" title="Delete preset" onClick={async () => { await api.deletePreset(p.id); setPresets(await api.presets()); }}>×</button>
             </div>
           ))}
@@ -269,6 +360,48 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
               <button key={label} className={`chip small ${aspect === label ? "on" : ""}`} onClick={() => setCrop(label, r)}>{label}</button>
             ))}
           </div>
+          {slider("Straighten", "straighten", -45, 45, 0.1, (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}°`)}
+          <div className="label">Spot removal</div>
+          {tool === "heal" ? (
+            <>
+              <label className="slider">
+                <div className="row"><span>Brush size</span><span className="val">{Math.round(brush * 1000) / 10}%</span></div>
+                <input type="range" min={0.005} max={0.12} step={0.001} value={brush}
+                  onChange={(e) => { const r = Number(e.target.value); setBrush(r); if (picked !== null && edits.spots[picked]) setSpot(picked, { ...edits.spots[picked], r }); }} />
+              </label>
+              <p className="muted small">Click a blemish to heal it. Drag the dotted circle to choose where it copies from. Delete removes the chosen spot.</p>
+            </>
+          ) : (
+            <button className="preset dim" onClick={() => setTool("heal")}>{edits.spots.length ? `${edits.spots.length} spot${edits.spots.length === 1 ? "" : "s"} healed · edit` : "Heal spots and dust · Q"}</button>
+          )}
+          {tool === "heal" && edits.spots.length > 0 && <button className="link" onClick={() => update({ spots: [] }, "Clear spots")}>Clear all {edits.spots.length} spots</button>}
+          <div className="label">Masks</div>
+          <div className="row wrap">
+            <button className="btn small" onClick={() => addMask("radial")}>+ Radial</button>
+            <button className="btn small" onClick={() => addMask("linear")}>+ Linear</button>
+          </div>
+          {edits.masks.map((m, i) => (
+            <div key={i} className="preset-row">
+              <button className={`preset ${tool === "mask" && picked === i ? "on" : ""}`} onClick={() => { setTool("mask"); setTimeout(() => setPicked(i)); }}>
+                {m.kind === "radial" ? "Radial" : "Linear"} {i + 1}{m.invert ? " · inverted" : ""}
+              </button>
+              <button className="x" title="Remove mask" onClick={() => { update({ masks: edits.masks.filter((_, k) => k !== i) }, "Remove mask"); setPicked(null); }}>×</button>
+            </div>
+          ))}
+          <div className="label">Versions</div>
+          {versions.map((v) => (
+            <div key={`${v.id}-${v.name}`} className="preset-row">
+              <button className={`preset ${v.active ? "on" : ""}`} aria-current={v.active} onClick={() => switchTo(v)}
+                onDoubleClick={async () => {
+                  const name = prompt("Name this version", v.name);
+                  if (name?.trim() && itemId !== null) { await api.renameVersion(itemId, v.active ? null : v.id, name.trim()).catch((e) => onError(String(e))); loadVersions(); }
+                }} title="Click to switch, double-click to rename">{v.name}</button>
+              {!v.active && v.id !== null && (
+                <button className="x" title="Delete this version" onClick={async () => { if (itemId !== null) { await api.deleteVersion(itemId, v.id!).catch((e) => onError(String(e))); loadVersions(); onChanged(); } }}>×</button>
+              )}
+            </div>
+          ))}
+          <button className="preset dim" onClick={newCopy}>+ Make a virtual copy</button>
           {status && <p className="muted small status">{status}</p>}
           <div className="label">History</div>
           <ol className="history" aria-label="Edit history">
@@ -280,8 +413,12 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           </ol>
         </div>
         <div className="stage">
-          <div className="canvas">
-            {shown ? <img src={shown.image} alt="" /> : <p className="muted">Opening…</p>}
+          <div className={`canvas ${tool !== "none" ? "tooling" : ""}`} ref={canvasRef}>
+            {shown ? <img ref={imgRef} src={shown.image} alt="" onLoad={measure} /> : <p className="muted">Opening…</p>}
+            {shown && box && tool !== "none" && !showBefore && (
+              <EditOverlay box={box} crop={edits.crop ?? [0, 0, 1, 1]} tool={tool} spots={edits.spots} masks={edits.masks} selected={picked} brush={brush}
+                onSelect={setPicked} onAddSpot={addSpot} onSpot={(i, sp) => setSpot(i, sp)} onMask={(i, m) => setMask(i, m)} />
+            )}
             {showBefore && <span className="before-tag">Before</span>}
           </div>
           <div className="filmstrip">
@@ -290,6 +427,32 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
         </div>
         <div className="panel">
           <Histogram data={rendered?.histogram ?? []} />
+          {tool === "mask" && picked !== null && edits.masks[picked] && (() => {
+            const m = edits.masks[picked];
+            const ms = (label: string, key: "exposure" | "contrast" | "highlights" | "shadows" | "saturation" | "temperature" | "feather", min: number, max: number, step = 1) => (
+              <label className="slider">
+                <div className="row"><span>{label}</span><span className="val">{signed(Math.round(m[key] * 100) / 100)}</span></div>
+                <input type="range" min={min} max={max} step={step} value={m[key]}
+                  onChange={(e) => setMask(picked, { ...m, [key]: Number(e.target.value) }, `Mask ${label.toLowerCase()}`, `mask-${picked}-${key}`)}
+                  onDoubleClick={() => setMask(picked, { ...m, [key]: key === "feather" ? 50 : 0 }, `Mask ${label.toLowerCase()} reset`)} />
+              </label>
+            );
+            return (
+              <div className="mask-panel">
+                <div className="group-title">{m.kind === "radial" ? "Radial" : "Linear"} mask {picked + 1}
+                  <button className="link" onClick={removePicked}>Remove</button>
+                </div>
+                {ms("Exposure", "exposure", -3, 3, 0.05)}
+                {ms("Contrast", "contrast", -100, 100)}
+                {ms("Highlights", "highlights", -100, 100)}
+                {ms("Shadows", "shadows", -100, 100)}
+                {ms("Saturation", "saturation", -100, 100)}
+                {ms("Temperature", "temperature", -100, 100)}
+                {m.kind === "radial" && ms("Feather", "feather", 0, 100)}
+                <label className="ex-check"><input type="checkbox" checked={m.invert} onChange={(e) => setMask(picked, { ...m, invert: e.target.checked }, e.target.checked ? "Invert mask" : "Un-invert mask")} /> Invert (change everything outside)</label>
+              </div>
+            );
+          })()}
           <div className="group-title">Light</div>
           {slider("Exposure", "exposure", -3, 3, 0.05)}
           {slider("Contrast", "contrast", -100, 100)}
@@ -310,6 +473,10 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           {slider("Noise reduction", "noise", 0, 100, 1, String)}
           <div className="group-title">Effects</div>
           {slider("Vignette", "vignette", -100, 100)}
+          <div className="group-title">Lens corrections</div>
+          {slider("Distortion", "distortion", -100, 100)}
+          {slider("Chromatic aberration", "fringing", 0, 100, 1, String)}
+          {slider("Lens vignetting", "lens_vignette", -100, 100)}
           <div className="group-title">Tone curve <button className="link" onClick={() => update({ curve: [] }, "Tone curve reset")}>Reset</button></div>
           <Curve points={edits.curve} onChange={(curve) => update({ curve }, "Tone curve")} />
           <div className="group-title">HSL</div>
