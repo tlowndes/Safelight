@@ -15,10 +15,20 @@ pub struct Edits {
     pub contrast: f32,
     pub highlights: f32,
     pub shadows: f32,
+    pub whites: f32,
+    pub blacks: f32,
     pub temperature: f32,
     pub tint: f32,
     pub vibrance: f32,
     pub saturation: f32,
+    /// Presence: local contrast and haze, -100..100.
+    pub clarity: f32,
+    pub dehaze: f32,
+    /// Detail: sharpening 0..150, noise reduction 0..100.
+    pub sharpening: f32,
+    pub noise: f32,
+    /// Darken (-) or lighten (+) the corners, -100..100.
+    pub vignette: f32,
     /// Tone curve points (input, output), 0..1, sorted by input. Empty = straight line.
     pub curve: Vec<[f32; 2]>,
     /// Per-colour hue, saturation, luminance, each -100..100, for
@@ -37,10 +47,17 @@ impl Default for Edits {
             contrast: 0.0,
             highlights: 0.0,
             shadows: 0.0,
+            whites: 0.0,
+            blacks: 0.0,
             temperature: 0.0,
             tint: 0.0,
             vibrance: 0.0,
             saturation: 0.0,
+            clarity: 0.0,
+            dehaze: 0.0,
+            sharpening: 0.0,
+            noise: 0.0,
+            vignette: 0.0,
             curve: vec![],
             hsl: [[0.0; 3]; 8],
             crop: None,
@@ -196,6 +213,9 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
     let wb = [gain * (1.0 + 0.25 * temp), gain * (1.0 - 0.2 * tint), gain * (1.0 - 0.25 * temp)];
     let contrast = 1.0 + e.contrast / 100.0;
     let (hi, sh) = (e.highlights / 100.0, e.shadows / 100.0);
+    let (wh, bl) = (e.whites / 100.0, e.blacks / 100.0);
+    // Dehaze: pull the haze floor down and stretch, plus a little colour back.
+    let haze = e.dehaze / 100.0 * 0.12;
     let (sat, vib) = (e.saturation / 100.0, e.vibrance / 100.0);
     let hsl_on = e.hsl.iter().any(|b| b.iter().any(|v| *v != 0.0));
 
@@ -207,9 +227,13 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
         }
         // Highlights and shadows: lift or recover by brightness zone.
         let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-        let delta = sh * 0.35 * (1.0 - l).powi(2) * (1.0 - (1.0 - l).powi(6)).max(0.0) + hi * 0.35 * l.powi(2);
+        let delta = sh * 0.35 * (1.0 - l).powi(2) * (1.0 - (1.0 - l).powi(6)).max(0.0) + hi * 0.35 * l.powi(2)
+            + wh * 0.25 * l.powi(4) + bl * 0.25 * (1.0 - l).powi(4);
         for v in c.iter_mut() {
             *v = ((*v + delta - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
+            if haze != 0.0 {
+                *v = ((*v - haze) / (1.0 - haze)).clamp(0.0, 1.0);
+            }
         }
         if let Some(lut) = &curve {
             for v in c.iter_mut() {
@@ -219,6 +243,7 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
                 *v = if i >= 255 { lut[255] } else { lut[i] * (1.0 - t) + lut[i + 1] * t };
             }
         }
+        let sat = sat + e.dehaze / 100.0 * 0.25;
         if sat != 0.0 || vib != 0.0 || hsl_on {
             let (mut h, mut s, mut l) = rgb_to_hsl(c[0], c[1], c[2]);
             if hsl_on && s > 0.0 {
@@ -242,7 +267,94 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
             px[k] = (c[k].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         }
     }
+    spatial(&mut base, e);
     base
+}
+
+/// Box blur of one channel, run twice for a smoother, near-Gaussian result. O(pixels).
+fn blur(src: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
+    if r == 0 || w == 0 || h == 0 {
+        return src.to_vec();
+    }
+    let pass = |src: &[f32], horizontal: bool| -> Vec<f32> {
+        let mut out = vec![0.0; src.len()];
+        let (n, lines) = if horizontal { (w, h) } else { (h, w) };
+        let at = |line: usize, i: usize| if horizontal { line * w + i } else { i * w + line };
+        let norm = 1.0 / (2 * r + 1) as f32;
+        for line in 0..lines {
+            let get = |i: isize| src[at(line, i.clamp(0, n as isize - 1) as usize)];
+            let mut acc: f32 = (-(r as isize)..=r as isize).map(get).sum();
+            for i in 0..n {
+                out[at(line, i)] = acc * norm;
+                acc += get(i as isize + r as isize + 1) - get(i as isize - r as isize);
+            }
+        }
+        out
+    };
+    let mut b = src.to_vec();
+    for _ in 0..2 {
+        b = pass(&pass(&b, true), false);
+    }
+    b
+}
+
+/// Effects that need neighbouring pixels: noise reduction, clarity, sharpening and vignette.
+/// They work on brightness, so colours don't shift.
+fn spatial(img: &mut RgbImage, e: &Edits) {
+    if e.noise == 0.0 && e.clarity == 0.0 && e.sharpening == 0.0 && e.vignette == 0.0 {
+        return;
+    }
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let luma: Vec<f32> = img.pixels().map(|p| (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0).collect();
+    let mut target = luma.clone();
+    if e.noise > 0.0 {
+        // Smooth only where the difference is small (grain), keep edges.
+        let soft = blur(&luma, w, h, 1);
+        let k = e.noise / 100.0;
+        for i in 0..target.len() {
+            let d = (soft[i] - luma[i]).abs();
+            let keep_edge = (1.0 - d / 0.08).clamp(0.0, 1.0);
+            target[i] += (soft[i] - luma[i]) * k * keep_edge;
+        }
+    }
+    if e.clarity != 0.0 {
+        let r = (w.max(h) / 80).max(2);
+        let wide = blur(&target, w, h, r);
+        let k = e.clarity / 100.0 * 0.8;
+        for i in 0..target.len() {
+            // Midtones get the most, so highlights and shadows don't clip.
+            let mid = 1.0 - (2.0 * target[i] - 1.0).powi(2);
+            target[i] += (target[i] - wide[i]) * k * mid;
+        }
+    }
+    if e.sharpening > 0.0 {
+        let fine = blur(&target, w, h, 1);
+        let k = e.sharpening / 100.0 * 1.2;
+        for i in 0..target.len() {
+            target[i] += (target[i] - fine[i]) * k;
+        }
+    }
+    let vig = e.vignette / 100.0;
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let rmax = (cx * cx + cy * cy).sqrt().max(1.0);
+    for (i, p) in img.pixels_mut().enumerate() {
+        let mut gain = if luma[i] > 1e-4 { target[i].max(0.0) / luma[i] } else { 1.0 };
+        let mut add = if luma[i] > 1e-4 { 0.0 } else { target[i].max(0.0) };
+        if vig != 0.0 {
+            let (x, y) = ((i % w) as f32 + 0.5 - cx, (i / w) as f32 + 0.5 - cy);
+            let d = ((x * x + y * y).sqrt() / rmax).powi(2);
+            let f = (d - 0.15).max(0.0) / 0.85;
+            if vig < 0.0 {
+                gain *= 1.0 + vig * 0.8 * f;
+            } else {
+                add += vig * 0.5 * f * (1.0 - target[i].clamp(0.0, 1.0));
+            }
+        }
+        for k in 0..3 {
+            let v = p[k] as f32 / 255.0 * gain + add;
+            p[k] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        }
+    }
 }
 
 /// 64-bucket brightness histogram, normalised so the tallest bar is 1.
@@ -275,6 +387,26 @@ pub fn save_edits(cat: &Catalogue, item_id: i64, e: &Edits) -> Result<()> {
             "INSERT INTO edits(item_id, json) VALUES (?1, ?2) ON CONFLICT(item_id) DO UPDATE SET json = excluded.json",
             params![item_id, json],
         )?;
+    }
+    Ok(())
+}
+
+/// Copy one photo's look onto others, keeping each photo's own crop and rotation.
+/// Returns what each photo had before, so the paste can be undone.
+pub fn paste_look(cat: &Catalogue, ids: &[i64], look: &Edits) -> Result<Vec<(i64, Edits)>> {
+    let mut before = Vec::with_capacity(ids.len());
+    for &id in ids {
+        let old = load_edits(cat, id)?;
+        save_edits(cat, id, &Edits { crop: old.crop, rotate: old.rotate, ..look.clone() })?;
+        before.push((id, old));
+    }
+    Ok(before)
+}
+
+/// Put back edits saved by `paste_look`.
+pub fn restore_edits(cat: &Catalogue, edits: &[(i64, Edits)]) -> Result<()> {
+    for (id, e) in edits {
+        save_edits(cat, *id, e)?;
     }
     Ok(())
 }
@@ -365,6 +497,42 @@ mod tests {
         let img = DynamicImage::ImageRgb8(RgbImage::new(40, 20));
         let out = apply(&img, &Edits { rotate: 1, crop: Some([0.0, 0.0, 0.5, 0.5]), ..Default::default() });
         assert_eq!((out.width(), out.height()), (10, 20));
+    }
+    #[test]
+    fn new_sliders_do_something_and_old_recipes_still_load() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(64, 48, |x, y| {
+            let v = ((x * 3 + y * 2) % 200 + 20) as u8;
+            image::Rgb([v, v.saturating_sub(10), v.saturating_add(10)])
+        }));
+        let base = img.to_rgb8();
+        for e in [
+            Edits { whites: 60.0, ..Default::default() },
+            Edits { blacks: -60.0, ..Default::default() },
+            Edits { clarity: 80.0, ..Default::default() },
+            Edits { dehaze: 50.0, ..Default::default() },
+            Edits { sharpening: 100.0, ..Default::default() },
+            Edits { noise: 80.0, ..Default::default() },
+            Edits { vignette: -80.0, ..Default::default() },
+            Edits { vignette: 80.0, ..Default::default() },
+        ] {
+            let out = apply(&img, &e);
+            assert_eq!(out.dimensions(), base.dimensions());
+            assert_ne!(out, base, "{e:?} changed nothing");
+        }
+        // A dark vignette darkens the corner more than the centre.
+        let v = apply(&img, &Edits { vignette: -100.0, ..Default::default() });
+        let corner = base.get_pixel(0, 0)[0] as i32 - v.get_pixel(0, 0)[0] as i32;
+        let centre = base.get_pixel(32, 24)[0] as i32 - v.get_pixel(32, 24)[0] as i32;
+        assert!(corner > centre);
+        // Recipes saved before these sliders existed still load.
+        let old: Edits = serde_json::from_str(r#"{"exposure":0.5,"contrast":10}"#).unwrap();
+        assert_eq!(old.clarity, 0.0);
+        assert_eq!(old.exposure, 0.5);
+    }
+    #[test]
+    fn blur_keeps_flat_areas_flat() {
+        let flat = vec![0.4f32; 30 * 20];
+        assert!(blur(&flat, 30, 20, 3).iter().all(|v| (v - 0.4).abs() < 1e-5));
     }
     #[test]
     fn hsl_round_trip() {

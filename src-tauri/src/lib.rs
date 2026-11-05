@@ -5,7 +5,7 @@ mod update;
 
 use base64::Engine;
 use safelight_core::{
-    ai::Engines, backup, cleanup, develop::{self, Edits, Preset}, dupes, exact, folders, imaging, organise, reference, scan_source,
+    ai::Engines, backup, cleanup, develop::{self, Edits, Preset}, dupes, exact, export, folders, imaging, organise, reference, scan_source,
     smart::{self, EmbeddingIndex}, Catalogue, Item, MonthGroup, ScanReport, Source, Stats,
 };
 use serde::Serialize;
@@ -666,30 +666,42 @@ async fn render_preview(state: State<'_, AppState>, id: i64, edits: Edits) -> Cm
     .await
 }
 
-/// Full-size export as JPEG. Formats the image library can't decode (e.g. HEIC) export at the
-/// largest size Windows can preview them.
+/// Export one photo as JPEG with the given (possibly unsaved) edits.
 #[tauri::command]
 async fn export_image(state: State<'_, AppState>, id: i64, edits: Edits, path: String, max_edge: Option<u32>) -> CmdResult<String> {
     let db = state.db_path.clone();
     blocking(move || {
         let cat = Catalogue::open(&db).map_err(err)?;
         let item = cat.item(id).map_err(err)?.ok_or("photo not found")?;
-        let src = std::path::Path::new(&item.path);
-        let img = imaging::decode(src)
-            .or_else(|| imaging::preview_image(src, 4096))
-            .ok_or("Safelight can't open this file for export")?;
-        let mut out = image::DynamicImage::ImageRgb8(develop::apply(&img, &edits));
-        if let Some(m) = max_edge {
-            if out.width().max(out.height()) > m {
-                out = out.resize(m, m, image::imageops::FilterType::Lanczos3);
-            }
-        }
-        let file = std::fs::File::create(&path).map_err(err)?;
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 92);
-        enc.encode_image(&out).map_err(err)?;
+        let out = export::render(std::path::Path::new(&item.path), &edits, max_edge).ok_or("Safelight can't open this file for export")?;
+        export::write(&out, std::path::Path::new(&path), export::Format::Jpeg, 92).map_err(err)?;
         Ok(path)
     })
     .await
+}
+
+/// Export many photos with their saved edits, reporting progress as "export-progress".
+#[tauri::command]
+async fn export_items(app: tauri::AppHandle, state: State<'_, AppState>, ids: Vec<i64>, options: export::ExportOptions) -> CmdResult<export::ExportReport> {
+    let db = state.db_path.clone();
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        export::export_items(&cat, &ids, &options, |p| {
+            let _ = app.emit("export-progress", p);
+        })
+        .map_err(err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn paste_look(state: State<'_, AppState>, ids: Vec<i64>, edits: Edits) -> CmdResult<Vec<(i64, Edits)>> {
+    with_db!(state, |cat| develop::paste_look(&cat, &ids, &edits))
+}
+
+#[tauri::command]
+async fn restore_edits(state: State<'_, AppState>, edits: Vec<(i64, Edits)>) -> CmdResult<()> {
+    with_db!(state, |cat| develop::restore_edits(&cat, &edits))
 }
 
 #[tauri::command]
@@ -852,7 +864,7 @@ pub fn run() {
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy, backup_status, run_backup,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
-            load_edits, save_edits, render_preview, export_image, presets, save_preset, delete_preset,
+            load_edits, save_edits, render_preview, export_image, export_items, paste_look, restore_edits, presets, save_preset, delete_preset,
             set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
             capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
             capture::reveal_in_folder, item_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,

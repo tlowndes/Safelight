@@ -484,3 +484,18 @@ kbd { min-width: 24px; height: 24px; padding: 0 7px; display: inline-flex; align
 .menu button:hover, .menu button:focus-visible { background: var(--surf2); outline: none; }
 .menu kbd { margin-left: auto; font: 11px/1 inherit; color: var(--dim); }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+
+/* ---------- Edit history ---------- */
+.history { list-style: none; display: flex; flex-direction: column; gap: 1px; max-height: 260px; overflow-y: auto; }
+.history button { width: 100%; padding: 5px 8px; border-radius: 7px; font-size: 12.5px; color: var(--mute); }
+.history button:hover { background: var(--surf2); color: var(--text); }
+.history button.on { background: var(--amberbg); color: var(--text); }
+.history button.undone { color: var(--dim); font-style: italic; }
+.seg button:disabled { opacity: 0.35; }
+
+/* ---------- Export dialog ---------- */
+.modal.export { width: 520px; gap: 16px; }
+.ex-field { display: flex; flex-direction: column; gap: 8px; }
+.ex-field .label { padding: 0; }
+.ex-field .row.start { gap: 6px; }
+.ex-field .folder-pick { text-align: left; }

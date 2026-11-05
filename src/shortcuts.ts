@@ -55,6 +55,16 @@ export const SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    name: "Edit",
+    items: [
+      { does: "Undo / redo an edit", keys: ["Ctrl", "Z", "/", "Ctrl", "Shift", "Z"], where: "Editor" },
+      { does: "Copy settings", keys: ["Ctrl", "Shift", "C"], where: "Editor" },
+      { does: "Paste settings (onto a selection too)", keys: ["Ctrl", "Shift", "V"] },
+      { does: "Export the selection", keys: ["Ctrl", "Shift", "E"], where: "Grid" },
+      { does: "Reset a slider", keys: ["Double-click"], where: "Editor" },
+    ],
+  },
+  {
     name: "Duplicates",
     items: [
       { does: "Keep the chosen copies", keys: ["Enter"] },

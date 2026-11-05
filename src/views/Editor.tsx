@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
 import { api, dateTimeLabel, defaultEdits, Edits, fileName, Item, MonthGroup, Preset, Rendered } from "../api";
 import Thumb from "../components/Thumb";
 import DeleteDialog from "../components/DeleteDialog";
+import ExportDialog from "../components/ExportDialog";
+import { copyEdits, useCopiedEdits } from "../editClipboard";
+import { isTyping } from "../shortcuts";
 
 type Props = { itemId: number | null; groups: MonthGroup[]; onPick: (id: number) => void; onError: (e: string) => void; onChanged: () => void };
 
@@ -10,7 +12,13 @@ const BANDS = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Ma
 const BAND_COLOURS = ["#e5533d", "#f08c35", "#f2c94c", "#6fbf5e", "#3fb0c9", "#4a72d8", "#9a5bd1", "#d659a8"];
 const CROPS: [string, number | null][] = [["Original", null], ["1:1", 1], ["4:5", 4 / 5], ["3:2", 3 / 2], ["16:9", 16 / 9]];
 
-let clipboard: Edits | null = null;
+/** One step in a photo's edit history. Slider drags merge into one step per slider. */
+type Step = { key: string; label: string; edits: Edits; at: number };
+type History = { steps: Step[]; pos: number };
+/** Kept for the whole session, so going back to a photo keeps its history. */
+const histories = new Map<number, History>();
+const MERGE_MS = 900;
+const signed = (v: number) => (v > 0 ? `+${v}` : `${v}`);
 
 export default function Editor({ itemId, groups, onPick, onError, onChanged }: Props) {
   const photos = useMemo(() => groups.flatMap((g) => g.items).filter((i) => i.kind === "photo"), [groups]);
@@ -23,6 +31,8 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
   const [band, setBand] = useState(1);
   const [aspect, setAspect] = useState<string>("Original");
   const [exporting, setExporting] = useState(false);
+  const [hist, setHist] = useState<History>({ steps: [], pos: -1 });
+  const clipboard = useCopiedEdits();
   const [status, setStatus] = useState("");
   const [deleting, setDeleting] = useState(false);
   const inflight = useRef(false);
@@ -42,6 +52,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
         const [it, e] = await Promise.all([api.item(itemId), api.loadEdits(itemId)]);
         setItem(it);
         setEdits(e);
+        setHist(histories.get(itemId) ?? { steps: [{ key: "open", label: "Opened", edits: e, at: 0 }], pos: 0 });
         setAspect(e.crop ? "Custom" : "Original");
         loaded.current = itemId;
         render(e);
@@ -80,11 +91,56 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
     return () => clearTimeout(t);
   }, [edits]);
 
-  const update = (patch: Partial<Edits>) => {
+  useEffect(() => { if (itemId !== null && hist.steps.length) histories.set(itemId, hist); }, [hist]);
+
+  /** Change the edits and record it in the history. Changes with the same key in quick
+   * succession (a slider drag) become one step. */
+  const update = (patch: Partial<Edits>, label = "Edit", key = label) => {
     const next = { ...edits, ...patch };
     setEdits(next);
     render(next);
+    const now = Date.now();
+    setHist((h) => {
+      const cur = h.steps[h.pos];
+      const steps = h.steps.slice(0, h.pos + 1);
+      if (cur && cur.key === key && h.pos > 0 && now - cur.at < MERGE_MS) {
+        steps[h.pos] = { key, label, edits: next, at: now };
+        return { steps, pos: h.pos };
+      }
+      steps.push({ key, label, edits: next, at: now });
+      const trimmed = steps.slice(-200);
+      return { steps: trimmed, pos: trimmed.length - 1 };
+    });
   };
+  /** Jump to a step without adding one. */
+  const goTo = (pos: number) => {
+    const step = hist.steps[pos];
+    if (!step) return;
+    setHist({ ...hist, pos, steps: hist.steps.map((s, i) => (i === pos ? { ...s, at: 0 } : s)) });
+    setEdits(step.edits);
+    setAspect(step.edits.crop ? "Custom" : "Original");
+    render(step.edits);
+  };
+  const undo = () => goTo(hist.pos - 1);
+  const redo = () => goTo(hist.pos + 1);
+  const paste = () => clipboard && update({ ...defaultEdits(), ...clipboard, crop: edits.crop, rotate: edits.rotate }, "Paste settings");
+  const copy = () => { copyEdits(edits); setStatus("Settings copied. Paste them here or onto a selection in the library."); };
+
+  useEffect(() => {
+    if (itemId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e) || !(e.ctrlKey || e.metaKey) || deleting || exporting) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) undo();
+      else if ((k === "z" && e.shiftKey) || k === "y") redo();
+      else if (k === "c" && e.shiftKey) copy();
+      else if (k === "v" && e.shiftKey) paste();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const toggleBefore = async (on: boolean) => {
     setShowBefore(on);
@@ -93,30 +149,14 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
 
   const setCrop = (label: string, ratio: number | null) => {
     setAspect(label);
-    if (!ratio || !item?.width || !item?.height) return update({ crop: null });
+    if (!ratio || !item?.width || !item?.height) return update({ crop: null }, `Crop ${label}`);
     const turned = edits.rotate % 2 === 1;
     const w = turned ? item.height : item.width;
     const h = turned ? item.width : item.height;
     const current = w / h;
     // Largest centred rectangle with the chosen shape.
     const crop: [number, number, number, number] = ratio > current ? [0, (1 - current / ratio) / 2, 1, current / ratio] : [(1 - ratio / current) / 2, 0, ratio / current, 1];
-    update({ crop });
-  };
-
-  const doExport = async (maxEdge: number | null) => {
-    if (!item || itemId === null) return;
-    const base = fileName(item.path).replace(/\.[^.]+$/, "");
-    const path = await save({ defaultPath: `${base} edited.jpg`, filters: [{ name: "JPEG", extensions: ["jpg"] }] });
-    if (!path) return;
-    setExporting(true);
-    try {
-      await api.exportImage(itemId, edits, path, maxEdge);
-      setStatus(`Exported to ${path}`);
-    } catch (e) {
-      onError(String(e));
-    } finally {
-      setExporting(false);
-    }
+    update({ crop }, `Crop ${label}`);
   };
 
   if (itemId === null) {
@@ -132,12 +172,14 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
   const strip = photos.slice(Math.max(0, idx - 8), idx + 12);
   const shown = showBefore && before ? before : rendered;
 
-  const slider = (label: string, key: keyof Edits, min: number, max: number, step = 1, fmt = (v: number) => (v > 0 ? `+${v}` : `${v}`)) => {
+  const slider = (label: string, key: keyof Edits, min: number, max: number, step = 1, fmt = signed) => {
     const v = edits[key] as number;
     return (
       <label className="slider">
-        <div className="row"><span>{label}</span><span className="val" onDoubleClick={() => update({ [key]: 0 } as Partial<Edits>)}>{fmt(Math.round(v * 100) / 100)}</span></div>
-        <input type="range" min={min} max={max} step={step} value={v} onChange={(e) => update({ [key]: Number(e.target.value) } as Partial<Edits>)} onDoubleClick={() => update({ [key]: 0 } as Partial<Edits>)} />
+        <div className="row"><span>{label}</span><span className="val" onDoubleClick={() => update({ [key]: 0 } as Partial<Edits>, `${label} reset`)}>{fmt(Math.round(v * 100) / 100)}</span></div>
+        <input type="range" min={min} max={max} step={step} value={v}
+          onChange={(e) => { const x = Number(e.target.value); update({ [key]: x } as Partial<Edits>, `${label} ${fmt(Math.round(x * 100) / 100)}`, key); }}
+          onDoubleClick={() => update({ [key]: 0 } as Partial<Edits>, `${label} reset`)} />
       </label>
     );
   };
@@ -147,11 +189,11 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
       <input type="range" min={-100} max={100} value={edits.hsl[band][k]} onChange={(e) => {
         const h = edits.hsl.map((b) => [...b] as [number, number, number]);
         h[band][k] = Number(e.target.value);
-        update({ hsl: h });
+        update({ hsl: h }, `${BANDS[band]} ${label.toLowerCase()} ${signed(h[band][k])}`, `hsl-${band}-${k}`);
       }} onDoubleClick={() => {
         const h = edits.hsl.map((b) => [...b] as [number, number, number]);
         h[band][k] = 0;
-        update({ hsl: h });
+        update({ hsl: h }, `${BANDS[band]} ${label.toLowerCase()} reset`);
       }} />
     </label>
   );
@@ -163,14 +205,25 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
         <b>{item ? fileName(item.path) : ""}</b>
         <div className="row" style={{ marginLeft: "auto" }}>
           <button className="btn" onMouseDown={() => toggleBefore(true)} onMouseUp={() => toggleBefore(false)} onMouseLeave={() => showBefore && toggleBefore(false)}>Hold for before</button>
-          <button className="btn" onClick={() => { clipboard = edits; setStatus("Settings copied"); }}>Copy settings</button>
-          <button className="btn" disabled={!clipboard} onClick={() => clipboard && update({ ...clipboard, crop: edits.crop, rotate: edits.rotate })}>Paste</button>
-          <button className="btn" onClick={() => { setAspect("Original"); update(defaultEdits()); }}>Reset</button>
+          <div className="seg" role="group" aria-label="Undo and redo">
+            <button aria-label="Undo (Ctrl+Z)" title="Undo (Ctrl+Z)" disabled={hist.pos <= 0} onClick={undo}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-3" /></svg>
+            </button>
+            <button aria-label="Redo (Ctrl+Shift+Z)" title="Redo (Ctrl+Shift+Z)" disabled={hist.pos >= hist.steps.length - 1} onClick={redo}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5" /><path d="M20 9H9a5 5 0 0 0 0 10h3" /></svg>
+            </button>
+          </div>
+          <button className="btn" title="Copy settings (Ctrl+Shift+C)" onClick={copy}>Copy settings</button>
+          <button className="btn" title="Paste settings (Ctrl+Shift+V)" disabled={!clipboard} onClick={paste}>Paste</button>
+          <button className="btn" onClick={() => { setAspect("Original"); update(defaultEdits(), "Reset"); }}>Reset</button>
           <button className="btn danger-ghost" onClick={() => setDeleting(true)}>Delete</button>
-          <button className="btn" disabled={exporting} onClick={() => doExport(2048)}>Export for web</button>
-          <button className="btn pri" disabled={exporting} onClick={() => doExport(null)}>{exporting ? "Exporting…" : "Export"}</button>
+          <button className="btn pri" onClick={() => setExporting(true)}>Export…</button>
         </div>
       </div>
+      {exporting && (
+        <ExportDialog ids={[itemId]} onClose={() => setExporting(false)} onError={onError}
+          beforeExport={() => api.saveEdits(itemId, edits)} />
+      )}
       {deleting && (
         <DeleteDialog
           ids={[itemId]}
@@ -188,7 +241,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           <div className="label">Presets</div>
           {presets.map((p) => (
             <div key={p.id} className="preset-row">
-              <button className="preset" onClick={() => update({ ...p.edits, crop: edits.crop, rotate: edits.rotate })}>{p.name}</button>
+              <button className="preset" onClick={() => update({ ...defaultEdits(), ...p.edits, crop: edits.crop, rotate: edits.rotate }, `Preset: ${p.name}`)}>{p.name}</button>
               <button className="x" title="Delete preset" onClick={async () => { await api.deletePreset(p.id); setPresets(await api.presets()); }}>×</button>
             </div>
           ))}
@@ -198,8 +251,8 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           }}>+ Save current as preset</button>
           <div className="label">Crop and rotate</div>
           <div className="row wrap">
-            <button className="btn small" onClick={() => update({ rotate: (edits.rotate + 3) % 4, crop: null })}>⟲</button>
-            <button className="btn small" onClick={() => update({ rotate: (edits.rotate + 1) % 4, crop: null })}>⟳</button>
+            <button className="btn small" onClick={() => update({ rotate: (edits.rotate + 3) % 4, crop: null }, "Rotate left")}>⟲</button>
+            <button className="btn small" onClick={() => update({ rotate: (edits.rotate + 1) % 4, crop: null }, "Rotate right")}>⟳</button>
           </div>
           <div className="row wrap">
             {CROPS.map(([label, r]) => (
@@ -207,6 +260,14 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
             ))}
           </div>
           {status && <p className="muted small status">{status}</p>}
+          <div className="label">History</div>
+          <ol className="history" aria-label="Edit history">
+            {hist.steps.map((st, i) => ({ st, i })).reverse().map(({ st, i }) => (
+              <li key={i}>
+                <button className={`${i === hist.pos ? "on" : ""} ${i > hist.pos ? "undone" : ""}`} aria-current={i === hist.pos} onClick={() => goTo(i)}>{st.label}</button>
+              </li>
+            ))}
+          </ol>
         </div>
         <div className="stage">
           <div className="canvas">
@@ -224,13 +285,23 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           {slider("Contrast", "contrast", -100, 100)}
           {slider("Highlights", "highlights", -100, 100)}
           {slider("Shadows", "shadows", -100, 100)}
+          {slider("Whites", "whites", -100, 100)}
+          {slider("Blacks", "blacks", -100, 100)}
           <div className="group-title">Colour</div>
           {slider("Temperature", "temperature", -100, 100)}
           {slider("Tint", "tint", -100, 100)}
           {slider("Vibrance", "vibrance", -100, 100)}
           {slider("Saturation", "saturation", -100, 100)}
-          <div className="group-title">Tone curve <button className="link" onClick={() => update({ curve: [] })}>Reset</button></div>
-          <Curve points={edits.curve} onChange={(curve) => update({ curve })} />
+          <div className="group-title">Presence</div>
+          {slider("Clarity", "clarity", -100, 100)}
+          {slider("Dehaze", "dehaze", -100, 100)}
+          <div className="group-title">Detail</div>
+          {slider("Sharpening", "sharpening", 0, 150, 1, String)}
+          {slider("Noise reduction", "noise", 0, 100, 1, String)}
+          <div className="group-title">Effects</div>
+          {slider("Vignette", "vignette", -100, 100)}
+          <div className="group-title">Tone curve <button className="link" onClick={() => update({ curve: [] }, "Tone curve reset")}>Reset</button></div>
+          <Curve points={edits.curve} onChange={(curve) => update({ curve }, "Tone curve")} />
           <div className="group-title">HSL</div>
           <div className="row swatches">
             {BAND_COLOURS.map((c, i) => (
