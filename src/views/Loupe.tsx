@@ -11,6 +11,9 @@ type Props = {
   onRate: (id: number, rating: number) => void;
   onFlag: (id: number, flag: number) => void;
   onHide: (id: number) => void;
+  onDelete: (id: number) => void;
+  /** A dialog is open on top: leave the keys to it. */
+  paused?: boolean;
   sourceName: (id: number) => string;
   /** Show photos that look like this one (when smart tagging is on). */
   onSimilar?: (item: Item) => void;
@@ -24,7 +27,7 @@ type View = { s: number; x: number; y: number; fit: boolean };
 const MAX_ZOOM = 8;
 const DATE_FROM: Record<string, string> = { exif: "from camera data", takeout: "from Google Takeout", filename: "from the file name", mtime: "from the file's modified time" };
 
-export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, sourceName, onSimilar, onSearch }: Props) {
+export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, onDelete, paused, sourceName, onSimilar, onSearch }: Props) {
   const item = items[index];
   const stage = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLImageElement & HTMLVideoElement>(null);
@@ -146,7 +149,7 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e) || !item) return;
+      if (isTyping(e) || !item || paused) return;
       const k = e.key;
       const ctrl = e.ctrlKey || e.metaKey;
       let used = true;
@@ -159,7 +162,8 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
       else if (k === "Home") onIndex(0);
       else if (k === "End") onIndex(items.length - 1);
       else if (k === "Escape" || k === "g" || k === "G") onClose();
-      else if ((k === "d" || k === "D") && item.kind === "photo") onEdit(item.id);
+      else if ((k === "r" || k === "R") && item.kind === "photo") onEdit(item.id);
+      else if (k === "d" || k === "D" || k === "Delete") onDelete(item.id);
       else if (k === "z" || k === "Z") toggleZoom();
       else if (k === "i" || k === "I") setInfo((v) => !v);
       else if (k === "Tab") setChrome((v) => !v);
@@ -239,7 +243,7 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-3 4.1M6.6 6.6A13 13 0 0 0 2 12c1 2.5 5 7 10 7a9.8 9.8 0 0 0 4.4-1M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg>
           </button>
         </div>
-        {item.kind === "photo" && <button className="pill edit" onClick={() => onEdit(item.id)}>Edit · D</button>}
+        {item.kind === "photo" && <button className="pill edit" onClick={() => onEdit(item.id)}>Edit · R</button>}
       </div>
 
       {info && (

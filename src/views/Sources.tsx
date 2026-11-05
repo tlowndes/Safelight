@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, n, Progress, Source } from "../api";
 import ProgressBar from "../components/ProgressBar";
@@ -14,6 +14,9 @@ type Props = { sources: Source[]; scanProgress: Progress | null; thumbProgress: 
 
 export default function Sources({ sources, scanProgress, thumbProgress, onScan, onChanged, onDone }: Props) {
   const [busy, setBusy] = useState(false);
+  const [askDelete, setAskDelete] = useState<boolean | null>(null);
+
+  useEffect(() => { api.settings().then((s) => setAskDelete(s.confirm_delete), () => {}); }, []);
 
   const pick = async (kind: string, name: string) => {
     const dir = await open({ directory: true, title: `Choose your ${name} folder` });
@@ -62,6 +65,16 @@ export default function Sources({ sources, scanProgress, thumbProgress, onScan, 
       </div>
       {scanProgress && scanProgress.done < scanProgress.total && <ProgressBar label={`Scanning ${scanning?.name ?? "source"}`} p={scanProgress} />}
       {thumbProgress && thumbProgress.done < thumbProgress.total && <ProgressBar label="Making previews and visual fingerprints" p={thumbProgress} />}
+      {askDelete !== null && (
+        <label className="switch-row compact">
+          <input type="checkbox" checked={askDelete} onChange={async (e) => {
+            setAskDelete(e.target.checked);
+            await api.setSetting("confirm_delete", e.target.checked ? "1" : "0");
+          }} />
+          <span className="switch" />
+          <span><b>Ask before moving photos to the bin</b><span className="muted small"> · when it's off, D and Delete bin straight away. They still go to the Recycle Bin.</span></span>
+        </label>
+      )}
       <div className="foot">
         <span className="muted">Re-scans only read new or changed files, so they're quick.</span>
         <div className="row">
