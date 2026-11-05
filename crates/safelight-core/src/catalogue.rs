@@ -51,6 +51,10 @@ pub struct Item {
     /// Exact-copy decision: None = not reviewed, "keep", or "spare" (a byte-identical copy the
     /// user chose not to keep; it stays on disk until they move it to the Safelight bin).
     pub copy_status: Option<String>,
+    /// Colour label: red, yellow, green, blue or purple.
+    pub label: Option<String>,
+    /// Virtual copies besides the one shown (0 = just the one).
+    pub versions: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +145,24 @@ CREATE TABLE IF NOT EXISTS binned (
   moved_to TEXT NOT NULL,
   at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS versions (
+  id INTEGER PRIMARY KEY,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, rules TEXT);
+CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  PRIMARY KEY (collection_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS item_meta (
+  item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+  caption TEXT NOT NULL DEFAULT '',
+  copyright TEXT NOT NULL DEFAULT '',
+  version_name TEXT
+);
 "#;
 
 /// Columns added after the first release; added in place so existing catalogues keep working.
@@ -159,17 +181,21 @@ const ITEM_COLUMNS: &[(&str, &str)] = &[
     ("flag", "INTEGER NOT NULL DEFAULT 0"),
     ("hidden", "INTEGER NOT NULL DEFAULT 0"),
     ("copy_status", "TEXT"),
+    ("label", "TEXT"),
 ];
 
 pub(crate) const ITEM_SELECT: &str = "SELECT i.id, i.source_id, i.path, i.kind, i.size, i.sha256, i.taken_at, i.date_source,
     i.width, i.height, i.has_camera, i.thumb, i.dup_status, i.is_reference, i.topic_id,
     EXISTS(SELECT 1 FROM edits e WHERE e.item_id = i.id),
     (SELECT COUNT(*) FROM items j WHERE j.sha256 = i.sha256 AND COALESCE(j.copy_status, '') <> 'spare') > 1,
-    i.rating, i.flag, i.hidden, i.copy_status
+    i.rating, i.flag, i.hidden, i.copy_status, i.label,
+    (SELECT COUNT(*) FROM versions v WHERE v.item_id = i.id)
   FROM items i";
 
 /// Items that belong in the library grid: not reference, not a dropped look-alike, not hidden,
 /// and not a spare exact copy the user chose not to keep.
+pub const LABELS: [&str; 5] = ["red", "yellow", "green", "blue", "purple"];
+
 pub(crate) const IN_LIBRARY: &str = "COALESCE(i.is_reference, 0) = 0 AND COALESCE(i.dup_status, '') <> 'drop' AND i.hidden = 0 AND COALESCE(i.copy_status, '') <> 'spare'";
 
 pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
@@ -195,6 +221,8 @@ pub(crate) fn item_from_row(r: &Row) -> rusqlite::Result<Item> {
         flag: r.get(18)?,
         hidden: r.get(19)?,
         copy_status: r.get(20)?,
+        label: r.get(21)?,
+        versions: r.get(22)?,
     })
 }
 
@@ -322,6 +350,20 @@ impl Catalogue {
         Ok(())
     }
 
+    /// Colour label, or None to clear it. Unknown colours are refused.
+    pub fn set_label(&self, ids: &[i64], label: Option<&str>) -> Result<()> {
+        if let Some(l) = label {
+            if !LABELS.contains(&l) {
+                return Err(crate::Error::Other(format!("unknown label {l}")));
+            }
+        }
+        let mut st = self.conn.prepare("UPDATE items SET label = ?1 WHERE id = ?2")?;
+        for id in ids {
+            st.execute(params![label, id])?;
+        }
+        Ok(())
+    }
+
     /// Hide or show photos. Hiding applies to every exact copy (same fingerprint), so the photo
     /// doesn't reappear from another source. Nothing on disk changes.
     pub fn set_hidden(&self, ids: &[i64], hidden: bool) -> Result<()> {
@@ -396,15 +438,19 @@ impl Catalogue {
              LIMIT ?1"
         ))?;
         let rows = st.query_map(params![limit, source_id, prefix], item_from_row)?;
-        let mut groups: Vec<MonthGroup> = Vec::new();
-        for item in rows {
-            let item = item?;
-            let month = item.taken_at.as_deref().map(|t| t[..7].to_string()).unwrap_or_else(|| "undated".into());
-            match groups.last_mut() {
-                Some(g) if g.month == month => g.items.push(item),
-                _ => groups.push(MonthGroup { month, items: vec![item] }),
-            }
-        }
-        Ok(groups)
+        group_by_month(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+}
+
+/// Items in date order, split into months.
+pub(crate) fn group_by_month(items: Vec<Item>) -> Result<Vec<MonthGroup>> {
+    let mut groups: Vec<MonthGroup> = Vec::new();
+    for item in items {
+        let month = item.taken_at.as_deref().map(|t| t[..7].to_string()).unwrap_or_else(|| "undated".into());
+        match groups.last_mut() {
+            Some(g) if g.month == month => g.items.push(item),
+            _ => groups.push(MonthGroup { month, items: vec![item] }),
+        }
+    }
+    Ok(groups)
 }

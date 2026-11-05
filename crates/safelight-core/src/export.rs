@@ -143,3 +143,79 @@ pub fn export_items(cat: &Catalogue, ids: &[i64], opts: &ExportOptions, mut prog
     progress(&ExportProgress { done: ids.len(), total: ids.len(), current: String::new() });
     Ok(report)
 }
+
+fn html_esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// A web gallery: a folder with an index.html, thumbnails and large images, ready to open in a
+/// browser or upload anywhere. Works offline; no scripts from the internet.
+pub fn web_gallery(cat: &Catalogue, ids: &[i64], folder: &str, title: &str, mut progress: impl FnMut(&ExportProgress)) -> Result<ExportReport> {
+    let root = PathBuf::from(folder);
+    let (big, small) = (root.join("images"), root.join("thumbs"));
+    std::fs::create_dir_all(&big)?;
+    std::fs::create_dir_all(&small)?;
+    let mut report = ExportReport::default();
+    let mut tiles = String::new();
+    for (k, &id) in ids.iter().enumerate() {
+        let Some(item) = cat.item(id)? else { continue };
+        progress(&ExportProgress { done: k, total: ids.len(), current: item.path.clone() });
+        let edits = develop::load_edits(cat, id)?;
+        let Some(img) = render(Path::new(&item.path), &edits, Some(2048)) else {
+            report.errors.push(format!("{}: Safelight can't open this file", item.path));
+            continue;
+        };
+        let name = format!("{:04}.jpg", k + 1);
+        write(&img, &big.join(&name), Format::Jpeg, 88)?;
+        write(&img.thumbnail(640, 640), &small.join(&name), Format::Jpeg, 82)?;
+        let caption = crate::meta::details(cat, id)?.caption;
+        let alt = if caption.is_empty() { Path::new(&item.path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default() } else { caption };
+        tiles.push_str(&format!(
+            "<a href=\"images/{name}\" data-caption=\"{c}\"><img src=\"thumbs/{name}\" alt=\"{c}\" loading=\"lazy\"></a>\n",
+            c = html_esc(&alt)
+        ));
+        report.exported += 1;
+        report.files.push(big.join(&name).to_string_lossy().to_string());
+    }
+    let page = format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{t}</title>
+<style>
+:root {{ color-scheme: dark; --bg: #0A0A0B; --text: #F4F4F5; --mute: #8A8A93; }}
+* {{ box-sizing: border-box; margin: 0; }}
+body {{ background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; padding: 32px 16px; }}
+h1 {{ font-weight: 600; font-size: 28px; letter-spacing: -0.02em; max-width: 1200px; margin: 0 auto 6px; }}
+p {{ color: var(--mute); max-width: 1200px; margin: 0 auto 24px; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-width: 1200px; margin: 0 auto; }}
+.grid a {{ display: block; aspect-ratio: 1; overflow: hidden; border-radius: 10px; background: #1C1C1F; }}
+.grid img {{ width: 100%; height: 100%; object-fit: cover; transition: transform .2s; }}
+.grid a:hover img {{ transform: scale(1.03); }}
+.box {{ position: fixed; inset: 0; background: rgba(0,0,0,.94); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }}
+.box.on {{ display: flex; }}
+.box img {{ max-width: 94vw; max-height: 86vh; border-radius: 6px; }}
+.box span {{ color: var(--mute); }}
+</style></head>
+<body>
+<h1>{t}</h1><p>{n} photos</p>
+<div class="grid">
+{tiles}</div>
+<div class="box" id="box"><img id="big" alt=""><span id="cap"></span></div>
+<script>
+const links = [...document.querySelectorAll('.grid a')]; let at = -1;
+const box = document.getElementById('box'), big = document.getElementById('big'), cap = document.getElementById('cap');
+function show(i) {{ at = (i + links.length) % links.length; big.src = links[at].href; cap.textContent = links[at].dataset.caption; box.classList.add('on'); }}
+links.forEach((a, i) => a.addEventListener('click', e => {{ e.preventDefault(); show(i); }}));
+box.addEventListener('click', () => box.classList.remove('on'));
+addEventListener('keydown', e => {{ if (!box.classList.contains('on')) return; if (e.key === 'Escape') box.classList.remove('on'); if (e.key === 'ArrowRight') show(at + 1); if (e.key === 'ArrowLeft') show(at - 1); }});
+</script>
+</body></html>
+"#,
+        t = html_esc(if title.trim().is_empty() { "Photos" } else { title.trim() }),
+        n = report.exported,
+    );
+    std::fs::write(root.join("index.html"), page)?;
+    progress(&ExportProgress { done: ids.len(), total: ids.len(), current: String::new() });
+    report.files.insert(0, root.join("index.html").to_string_lossy().to_string());
+    Ok(report)
+}
