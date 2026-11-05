@@ -16,7 +16,8 @@ function landPath(topo: Topology): string {
   for (const g of geoms) {
     const polys = (g.type === "Polygon" ? [g.coordinates] : g.coordinates) as number[][][][];
     for (const poly of polys) for (const ring of poly) {
-      out.push(ring.map(([lon, lat], i) => `${i ? "L" : "M"}${(lon + 180).toFixed(2)} ${(90 - lat).toFixed(2)}`).join("") + "Z");
+      // A ring that wraps the date line jumps across the map: lift the pen there instead of drawing a band.
+      out.push(ring.map(([lon, lat], i) => `${i && Math.abs(lon - ring[i - 1][0]) < 180 ? "L" : "M"}${(lon + 180).toFixed(2)} ${(90 - lat).toFixed(2)}`).join("") + "Z");
     }
   }
   return out.join("");
@@ -45,15 +46,15 @@ export default function MapView({ groups, onShow, onOpenTagging, onError }: Prop
   }, []);
 
   const base = Math.max(size.w / 360, size.h / 180);
-  // Start framed on the photos.
-  useEffect(() => {
-    if (cam || !points?.length || size.w < 50) return;
+  // Until the user pans or zooms, keep the photos framed (and re-frame when the window resizes).
+  const fit = useMemo((): Cam => {
+    if (!points?.length) return { k: 1, x: (size.w - 360 * base) / 2, y: (size.h - 180 * base) / 2 };
     const xs = points.map((p) => p.lon + 180), ys = points.map((p) => 90 - p.lat);
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     const k = Math.min(60, Math.max(1, Math.min(size.w / ((x1 - x0 + 4) * base), size.h / ((y1 - y0 + 4) * base)) * 0.8));
-    setCam({ k, x: size.w / 2 - ((x0 + x1) / 2) * base * k, y: size.h / 2 - ((y0 + y1) / 2) * base * k });
-  }, [points, size.w, size.h]); // eslint-disable-line react-hooks/exhaustive-deps
-  const c = cam ?? { k: 1, x: (size.w - 360 * base) / 2, y: (size.h - 180 * base) / 2 };
+    return { k, x: size.w / 2 - ((x0 + x1) / 2) * base * k, y: size.h / 2 - ((y0 + y1) / 2) * base * k };
+  }, [points, size.w, size.h, base]);
+  const c = cam ?? fit;
   const sx = (lon: number) => (lon + 180) * base * c.k + c.x;
   const sy = (lat: number) => (90 - lat) * base * c.k + c.y;
 

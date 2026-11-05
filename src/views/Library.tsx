@@ -503,6 +503,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
             onNew={(smart) => setCollDialog({ smart })}
             onEdit={(c) => setCollDialog({ smart: !!c.rules, editing: c })}
             onDelete={async (c) => {
+              if (!window.confirm(`Delete the collection "${c.name}"? The photos stay in your library.`)) return;
               try {
                 await api.deleteCollection(c.id);
                 if (collection === c.id) setCollection(null);
