@@ -9,6 +9,28 @@ export type Item = {
   topic_id: number | null; edited: boolean; has_exact_duplicate: boolean;
   /** 0 = unrated, 1-5 stars */ rating: number; /** 1 pick, -1 reject, 0 none */ flag: number; hidden: boolean;
   /** Exact-copy decision: null = not reviewed */ copy_status: "keep" | "spare" | null;
+  label: Label | null; /** Virtual copies besides the one shown */ versions: number;
+};
+export type Label = "red" | "yellow" | "green" | "blue" | "purple";
+export const LABELS: Label[] = ["red", "yellow", "green", "blue", "purple"];
+export const LABEL_NAMES: Record<Label, string> = { red: "Red", yellow: "Yellow", green: "Green", blue: "Blue", purple: "Purple" };
+export type Rules = {
+  min_rating?: number | null; flag?: number | null; label?: Label | null; kind?: "photo" | "video" | null;
+  year_from?: number | null; year_to?: number | null; edited?: boolean | null; text?: string | null;
+};
+export type Collection = { id: number; name: string; rules: Rules | null; count: number };
+export type CameraInfo = { camera: string | null; lens: string | null; iso: string | null; shutter: string | null; aperture: string | null; focal_length: string | null; flash: string | null; software: string | null };
+export type Details = { caption: string; copyright: string };
+export type PhotoDetails = { camera: CameraInfo; details: Details; xmp: boolean };
+export type Version = { id: number | null; name: string; active: boolean };
+export type MapPoint = { id: number; lat: number; lon: number; place: string | null };
+export type ImportOptions = { from: string; to: string; folders: "by_date" | "none"; rename: "original" | "date_time" };
+export type ImportPreview = { found: number; new: number; already: number; bytes: number };
+export type ImportReport = { copied: number; skipped: number; bytes: number; errors: string[]; source_id: number | null };
+export type Spot = { x: number; y: number; r: number; sx: number; sy: number };
+export type Mask = {
+  kind: "linear" | "radial"; x1: number; y1: number; x2: number; y2: number; feather: number; invert: boolean;
+  exposure: number; contrast: number; highlights: number; shadows: number; saturation: number; temperature: number;
 };
 export type MonthGroup = { month: string; items: Item[] };
 export type Stats = {
@@ -48,6 +70,7 @@ export type Edits = {
   temperature: number; tint: number; vibrance: number; saturation: number;
   clarity: number; dehaze: number; sharpening: number; noise: number; vignette: number; curve: [number, number][]; hsl: [number, number, number][];
   crop: [number, number, number, number] | null; rotate: number;
+  straighten: number; distortion: number; fringing: number; lens_vignette: number; spots: Spot[]; masks: Mask[];
 };
 export type ExportFormat = "jpeg" | "png" | "tiff";
 export type ExportNaming = "original" | "suffix" | "date_number";
@@ -88,6 +111,7 @@ export type ShotSettingKey = "folder" | "destination" | "watch" | "reader" | "cl
 export const defaultEdits = (): Edits => ({
   exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, clarity: 0, dehaze: 0, sharpening: 0, noise: 0, vignette: 0, temperature: 0, tint: 0, vibrance: 0, saturation: 0,
   curve: [], hsl: Array.from({ length: 8 }, () => [0, 0, 0] as [number, number, number]), crop: null, rotate: 0,
+  straighten: 0, distortion: 0, fringing: 0, lens_vignette: 0, spots: [], masks: [],
 });
 
 const on = <T,>(name: string, cb: (p: T) => void) => listen<T>(name, (e) => cb(e.payload));
@@ -162,6 +186,31 @@ export const api = {
   /** Paste a look onto photos (each keeps its crop). Returns what they had, for undo. */
   pasteLook: (ids: number[], edits: Edits) => invoke<[number, Edits][]>("paste_look", { ids, edits }),
   restoreEdits: (edits: [number, Edits][]) => invoke<void>("restore_edits", { edits }),
+  setLabel: (ids: number[], label: Label | null) => invoke<void>("set_label", { ids, label }),
+  collections: () => invoke<Collection[]>("collections_list"),
+  createCollection: (name: string, rules: Rules | null) => invoke<number>("collection_create", { name, rules }),
+  updateCollection: (id: number, name: string, rules: Rules | null) => invoke<void>("collection_update", { id, name, rules }),
+  deleteCollection: (id: number) => invoke<void>("collection_delete", { id }),
+  addToCollection: (id: number, ids: number[]) => invoke<void>("collection_add", { id, ids }),
+  removeFromCollection: (id: number, ids: number[]) => invoke<void>("collection_remove", { id, ids }),
+  collectionItems: (id: number) => invoke<MonthGroup[]>("collection_items", { id }),
+  photoDetails: (id: number) => invoke<PhotoDetails>("photo_details", { id }),
+  setDetails: (ids: number[], details: Details) => invoke<void>("set_details", { ids, details }),
+  versions: (id: number) => invoke<Version[]>("versions", { id }),
+  newVersion: (id: number) => invoke<string>("new_version", { id }),
+  switchVersion: (id: number, version: number) => invoke<Edits>("switch_version", { id, version }),
+  deleteVersion: (id: number, version: number) => invoke<void>("delete_version", { id, version }),
+  renameVersion: (id: number, version: number | null, name: string) => invoke<void>("rename_version", { id, version, name }),
+  writeXmp: (ids: number[]) => invoke<{ written: number; errors: string[] }>("write_xmp", { ids }),
+  readXmp: (ids: number[]) => invoke<number>("read_xmp", { ids }),
+  mapPoints: () => invoke<MapPoint[]>("map_points"),
+  importPreview: (from: string) => invoke<ImportPreview>("import_preview", { from }),
+  importDefaultFolder: () => invoke<string>("import_default_folder"),
+  importRun: (options: ImportOptions) => invoke<ImportReport>("import_run", { options }),
+  onImportProgress: (cb: (p: Progress) => void) => on("import-progress", cb),
+  webGallery: (ids: number[], folder: string, title: string) => invoke<ExportReport>("web_gallery", { ids, folder, title }),
+  renderForPrint: (ids: number[], maxEdge: number) => invoke<string[]>("render_for_print", { ids, maxEdge }),
+  spotSource: (id: number, edits: Edits, x: number, y: number, r: number) => invoke<[number, number]>("spot_source", { id, edits, x, y, r }),
   savePreset: (name: string, edits: Edits) => invoke<number>("save_preset", { name, edits }),
   deletePreset: (id: number) => invoke<void>("delete_preset", { id }),
 

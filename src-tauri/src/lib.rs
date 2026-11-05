@@ -5,7 +5,7 @@ mod update;
 
 use base64::Engine;
 use safelight_core::{
-    ai::Engines, backup, cleanup, develop::{self, Edits, Preset}, dupes, exact, export, folders, imaging, organise, reference, scan_source,
+    ai::Engines, backup, cleanup, collections, develop::{self, Edits, Preset}, dupes, exact, export, import, meta, xmp, folders, imaging, organise, reference, scan_source,
     smart::{self, EmbeddingIndex}, Catalogue, Item, MonthGroup, ScanReport, Source, Stats,
 };
 use serde::Serialize;
@@ -706,6 +706,192 @@ async fn restore_edits(state: State<'_, AppState>, edits: Vec<(i64, Edits)>) -> 
     with_db!(state, |cat| develop::restore_edits(&cat, &edits))
 }
 
+// ---------- Lightroom extras: labels, collections, details, copies, XMP, import, map, gallery ----------
+
+#[tauri::command]
+async fn set_label(state: State<'_, AppState>, ids: Vec<i64>, label: Option<String>) -> CmdResult<()> {
+    with_db!(state, |cat| cat.set_label(&ids, label.as_deref()))
+}
+
+#[tauri::command]
+async fn collections_list(state: State<'_, AppState>) -> CmdResult<Vec<collections::Collection>> {
+    with_db!(state, |cat| collections::list(&cat))
+}
+
+#[tauri::command]
+async fn collection_create(state: State<'_, AppState>, name: String, rules: Option<collections::Rules>) -> CmdResult<i64> {
+    with_db!(state, |cat| collections::create(&cat, &name, rules.as_ref()))
+}
+
+#[tauri::command]
+async fn collection_update(state: State<'_, AppState>, id: i64, name: String, rules: Option<collections::Rules>) -> CmdResult<()> {
+    with_db!(state, |cat| collections::update(&cat, id, &name, rules.as_ref()))
+}
+
+#[tauri::command]
+async fn collection_delete(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    with_db!(state, |cat| collections::delete(&cat, id))
+}
+
+#[tauri::command]
+async fn collection_add(state: State<'_, AppState>, id: i64, ids: Vec<i64>) -> CmdResult<()> {
+    with_db!(state, |cat| collections::add(&cat, id, &ids))
+}
+
+#[tauri::command]
+async fn collection_remove(state: State<'_, AppState>, id: i64, ids: Vec<i64>) -> CmdResult<()> {
+    with_db!(state, |cat| collections::remove(&cat, id, &ids))
+}
+
+#[tauri::command]
+async fn collection_items(state: State<'_, AppState>, id: i64, limit: Option<i64>) -> CmdResult<Vec<MonthGroup>> {
+    with_db!(state, |cat| collections::items(&cat, id, limit.unwrap_or(5000)))
+}
+
+#[derive(Serialize)]
+struct PhotoDetails {
+    camera: meta::CameraInfo,
+    details: meta::Details,
+    xmp: bool,
+}
+
+#[tauri::command]
+async fn photo_details(state: State<'_, AppState>, id: i64) -> CmdResult<PhotoDetails> {
+    let db = state.db_path.clone();
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let item = cat.item(id).map_err(err)?.ok_or("photo not found")?;
+        let path = std::path::Path::new(&item.path);
+        Ok(PhotoDetails { camera: meta::camera_info(path), details: meta::details(&cat, id).map_err(err)?, xmp: xmp::sidecar_path(path).exists() })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_details(state: State<'_, AppState>, ids: Vec<i64>, details: meta::Details) -> CmdResult<()> {
+    with_db!(state, |cat| meta::set_details(&cat, &ids, &details))
+}
+
+#[tauri::command]
+async fn versions(state: State<'_, AppState>, id: i64) -> CmdResult<Vec<meta::Version>> {
+    with_db!(state, |cat| meta::versions(&cat, id))
+}
+
+#[tauri::command]
+async fn new_version(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    with_db!(state, |cat| meta::new_version(&cat, id))
+}
+
+#[tauri::command]
+async fn switch_version(state: State<'_, AppState>, id: i64, version: i64) -> CmdResult<Edits> {
+    with_db!(state, |cat| meta::switch_version(&cat, id, version))
+}
+
+#[tauri::command]
+async fn delete_version(state: State<'_, AppState>, id: i64, version: i64) -> CmdResult<()> {
+    with_db!(state, |cat| meta::delete_version(&cat, id, version))
+}
+
+#[tauri::command]
+async fn rename_version(state: State<'_, AppState>, id: i64, version: Option<i64>, name: String) -> CmdResult<()> {
+    with_db!(state, |cat| meta::rename_version(&cat, id, version, &name))
+}
+
+#[tauri::command]
+async fn write_xmp(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<xmp::XmpReport> {
+    with_db!(state, |cat| xmp::write_sidecars(&cat, &ids, false))
+}
+
+#[tauri::command]
+async fn read_xmp(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<usize> {
+    with_db!(state, |cat| xmp::read_sidecars(&cat, &ids))
+}
+
+#[tauri::command]
+async fn map_points(state: State<'_, AppState>) -> CmdResult<Vec<meta::MapPoint>> {
+    with_db!(state, |cat| meta::map_points(&cat))
+}
+
+#[tauri::command]
+async fn import_preview(state: State<'_, AppState>, from: String) -> CmdResult<import::ImportPreview> {
+    with_db!(state, |cat| import::preview(&cat, std::path::Path::new(&from)))
+}
+
+/// Where imports go unless the user picks somewhere else: Pictures\Safelight Imports.
+#[tauri::command]
+fn import_default_folder(app: tauri::AppHandle) -> String {
+    app.path().picture_dir().map(|p| p.join("Safelight Imports")).unwrap_or_default().to_string_lossy().to_string()
+}
+
+#[tauri::command]
+async fn import_run(app: tauri::AppHandle, state: State<'_, AppState>, options: import::ImportOptions) -> CmdResult<import::ImportReport> {
+    let db = state.db_path.clone();
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        import::run(&cat, &options, |p| {
+            let _ = app.emit("import-progress", p);
+        })
+        .map_err(err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn web_gallery(app: tauri::AppHandle, state: State<'_, AppState>, ids: Vec<i64>, folder: String, title: String) -> CmdResult<export::ExportReport> {
+    let db = state.db_path.clone();
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        export::web_gallery(&cat, &ids, &folder, &title, |p| {
+            let _ = app.emit("export-progress", p);
+        })
+        .map_err(err)
+    })
+    .await
+}
+
+/// Edited JPEGs for printing or a slideshow, made in a temporary folder. Returns their paths.
+#[tauri::command]
+async fn render_for_print(app: tauri::AppHandle, state: State<'_, AppState>, ids: Vec<i64>, max_edge: u32) -> CmdResult<Vec<String>> {
+    let db = state.db_path.clone();
+    let dir = app.path().app_cache_dir().map_err(err)?.join("print");
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(err)?;
+        let mut out = vec![];
+        for (k, id) in ids.iter().enumerate() {
+            let Some(item) = cat.item(*id).map_err(err)? else { continue };
+            let edits = develop::load_edits(&cat, *id).map_err(err)?;
+            let Some(img) = export::render(std::path::Path::new(&item.path), &edits, Some(max_edge)) else { continue };
+            let dest = dir.join(format!("{k:04}.jpg"));
+            export::write(&img, &dest, export::Format::Jpeg, 90).map_err(err)?;
+            let _ = app.emit("export-progress", serde_json::json!({ "done": k + 1, "total": ids.len() }));
+            out.push(dest.to_string_lossy().to_string());
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Where to heal a spot from, picked from the preview with the geometry edits applied.
+#[tauri::command]
+async fn spot_source(state: State<'_, AppState>, id: i64, edits: Edits, x: f32, y: f32, r: f32) -> CmdResult<(f32, f32)> {
+    let db = state.db_path.clone();
+    let cache = state.preview.clone();
+    blocking(move || {
+        let mut slot = cache.lock().map_err(err)?;
+        if slot.as_ref().map(|s| s.0) != Some(id) {
+            let cat = Catalogue::open(&db).map_err(err)?;
+            let item = cat.item(id).map_err(err)?.ok_or("photo not found")?;
+            let img = imaging::preview_image(std::path::Path::new(&item.path), PREVIEW_EDGE).ok_or("Safelight can't open this file for editing yet")?;
+            *slot = Some((id, img));
+        }
+        let geo = develop::geometry(&slot.as_ref().unwrap().1, &Edits { spots: vec![], masks: vec![], ..edits });
+        Ok(develop::find_spot_source(&geo, x, y, r))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn presets(state: State<'_, AppState>) -> CmdResult<Vec<Preset>> {
     with_db!(state, |cat| develop::presets(&cat))
@@ -866,7 +1052,10 @@ pub fn run() {
             suggest_events, save_event, delete_event, reference_suggestions, set_reference, plan_summary, run_copy, backup_status, run_backup,
             cleanup_summary, cleanup_files, cleanup_run, delete_items, check_reference, check_update, install_update, app_version,
             topics, create_topic, rename_topic, delete_topic, set_topic, tags, add_tag, remove_tag, reference_items,
-            load_edits, save_edits, render_preview, export_image, export_items, paste_look, restore_edits, presets, save_preset, delete_preset,
+            load_edits, save_edits, render_preview, export_image, export_items, paste_look, restore_edits,
+            set_label, collections_list, collection_create, collection_update, collection_delete, collection_add, collection_remove, collection_items,
+            photo_details, set_details, versions, new_version, switch_version, delete_version, rename_version, write_xmp, read_xmp, map_points,
+            import_preview, import_default_folder, import_run, web_gallery, render_for_print, spot_source, presets, save_preset, delete_preset,
             set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
             capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
             capture::reveal_in_folder, item_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
