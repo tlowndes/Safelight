@@ -15,7 +15,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Show the photo in the folder tree", keys: ["Shift", "F"] },
       { does: "Show the photo in Explorer", keys: ["Ctrl", "R"] },
       { does: "Loupe (full screen)", keys: ["E"] },
-      { does: "Open in the editor", keys: ["D"] },
+      { does: "Open in the editor", keys: ["Ctrl", "E"] },
       { does: "First / last", keys: ["Home", "/", "End"] },
       { does: "Play or pause a video", keys: ["Space"], where: "Loupe" },
       { does: "Show or hide photo details", keys: ["I"], where: "Loupe" },
@@ -42,6 +42,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Reject", keys: ["X"] },
       { does: "Clear flag", keys: ["U"] },
       { does: "Hide from the library", keys: ["H"] },
+      { does: "Move to the bin (selected, or the photo in focus)", keys: ["D", "/", "Delete"] },
     ],
   },
   {
@@ -51,7 +52,6 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { does: "Select a range", keys: ["Shift", "Click"], where: "Grid" },
       { does: "Select all", keys: ["Ctrl", "A"], where: "Grid" },
       { does: "Clear selection", keys: ["Esc"], where: "Grid" },
-      { does: "Delete selected", keys: ["Delete"], where: "Grid" },
     ],
   },
   {

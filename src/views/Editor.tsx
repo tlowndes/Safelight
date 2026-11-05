@@ -41,6 +41,16 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
 
   useEffect(() => { api.presets().then(setPresets).catch((e) => onError(String(e))); }, []);
 
+  // D bins the photo being edited, same as in the grid and loupe.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e) || deleting || exporting || itemId === null || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "d" || e.key === "D") { e.preventDefault(); setDeleting(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleting, exporting, itemId]);
+
   // Load the photo and its saved edits.
   useEffect(() => {
     if (itemId === null) return;
@@ -216,7 +226,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           <button className="btn" title="Copy settings (Ctrl+Shift+C)" onClick={copy}>Copy settings</button>
           <button className="btn" title="Paste settings (Ctrl+Shift+V)" disabled={!clipboard} onClick={paste}>Paste</button>
           <button className="btn" onClick={() => { setAspect("Original"); update(defaultEdits(), "Reset"); }}>Reset</button>
-          <button className="btn danger-ghost" onClick={() => setDeleting(true)}>Delete</button>
+          <button className="btn danger-ghost" onClick={() => setDeleting(true)} title="Delete (D)">Delete</button>
           <button className="btn pri" onClick={() => setExporting(true)}>Export…</button>
         </div>
       </div>

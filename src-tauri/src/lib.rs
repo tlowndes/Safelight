@@ -200,6 +200,7 @@ struct Settings {
     backup_root: Option<String>,
     auto_reference: bool,
     smart_tagging: bool,
+    confirm_delete: bool,
 }
 
 #[tauri::command]
@@ -212,6 +213,7 @@ async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
             backup_root: cat.setting("backup_root").map_err(err)?,
             auto_reference: organise::auto_reference_enabled(&cat).map_err(err)?,
             smart_tagging: cat.setting("smart_tagging").map_err(err)?.as_deref() != Some("0"),
+            confirm_delete: cat.setting("confirm_delete").map_err(err)?.as_deref() != Some("0"),
         })
     })
     .await
@@ -219,7 +221,7 @@ async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
 
 #[tauri::command]
 async fn set_setting(state: State<'_, AppState>, key: String, value: String) -> CmdResult<()> {
-    if !matches!(key.as_str(), "library_root" | "backup_root" | "auto_reference" | "auto_backup" | "smart_tagging") {
+    if !matches!(key.as_str(), "library_root" | "backup_root" | "auto_reference" | "auto_backup" | "smart_tagging" | "confirm_delete") {
         return Err(format!("unknown setting {key}"));
     }
     with_db!(state, |cat| cat.set_setting(&key, &value))

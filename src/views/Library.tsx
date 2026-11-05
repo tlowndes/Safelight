@@ -65,7 +65,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<number | null>(null);
   const [loupe, setLoupe] = useState<number | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState<number[] | null>(null);
+  const confirming = deleting !== null;
   const [exportIds, setExportIds] = useState<number[] | null>(null);
   const copied = useCopiedEdits();
   const [notice, setNotice] = useState<{ text: string; undo?: () => void } | null>(null);
@@ -251,7 +252,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       const focused = at >= 0 ? flat[at] : undefined;
       if (k === "Escape") { setMenu(null); setSelected(new Set()); }
       else if ((k === "r" || k === "R") && ctrl && focused) { e.preventDefault(); showInExplorer(focused); }
-      else if ((k === "Delete" || k === "Backspace") && selecting) setConfirming(true);
+      else if ((k === "Delete" || k === "Backspace" || ((k === "d" || k === "D") && !ctrl)) && targets().length) { e.preventDefault(); setDeleting(targets()); }
+      else if ((k === "e" || k === "E") && ctrl && !e.shiftKey) { e.preventDefault(); if (cursor !== null && flat[at]?.kind === "photo") onEdit(cursor); }
       else if (k === "a" && ctrl) { e.preventDefault(); setSelected(new Set(flat.map((i) => i.id))); }
       else if ((k === "v" || k === "V") && ctrl && e.shiftKey && targets().length) { e.preventDefault(); pasteEdits(targets()); }
       else if ((k === "e" || k === "E") && ctrl && e.shiftKey && targets().length) { e.preventDefault(); setExportIds(targets()); }
@@ -264,7 +266,6 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
       else if (k === "End") move(flat[flat.length - 1]?.id);
       else if (k === " " && cursor !== null) { e.preventDefault(); toggle(cursor); }
       else if ((k === "e" || k === "E" || k === "Enter") && (cursor ?? flat[0]?.id) !== undefined) { e.preventDefault(); setLoupe(cursor ?? flat[0].id); }
-      else if ((k === "d" || k === "D") && cursor !== null && flat[at]?.kind === "photo") onEdit(cursor);
       else if (/^[0-5]$/.test(k)) rate(targets(), Number(k));
       else if (k === "p" || k === "P") flag(targets(), 1);
       else if (k === "x" || k === "X") flag(targets(), -1);
@@ -392,7 +393,7 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
             <button role="menuitem" onClick={() => { setMenu(null); showInExplorer(menu.item); }}>Show in Explorer<kbd>Ctrl R</kbd></button>
             <hr />
             <button role="menuitem" onClick={() => { setMenu(null); setLoupe(menu.item.id); }}>Open in loupe<kbd>E</kbd></button>
-            {menu.item.kind === "photo" && <button role="menuitem" onClick={() => { setMenu(null); onEdit(menu.item.id); }}>Edit<kbd>D</kbd></button>}
+            {menu.item.kind === "photo" && <button role="menuitem" onClick={() => { setMenu(null); onEdit(menu.item.id); }}>Edit<kbd>Ctrl E</kbd></button>}
             {smartReady && <button role="menuitem" onClick={() => { setMenu(null); showSimilar(menu.item); }}>Find similar photos</button>}
             <hr />
             {copied && menu.item.kind === "photo" && (
@@ -432,16 +433,27 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           }}>Move to Reference</button>
           <button className="btn" onClick={() => setSelected(new Set(flat.map((i) => i.id)))}>Select all {n(flat.length)}</button>
           <button className="btn" onClick={() => setSelected(new Set())}>Clear · Esc</button>
-          <button className="btn danger" onClick={() => setConfirming(true)}>Delete…</button>
+          <button className="btn danger" onClick={() => setDeleting([...selected])}>Delete · D</button>
         </div>
       )}
       {exportIds && <ExportDialog ids={exportIds} onClose={() => setExportIds(null)} onError={onError} />}
-      {confirming && (
+      {deleting && (
         <DeleteDialog
-          ids={[...selected]}
-          onClose={() => setConfirming(false)}
+          ids={deleting}
+          onClose={() => setDeleting(null)}
           onError={onError}
           onDone={(r) => {
+            const gone = new Set(deleting);
+            if (loupe !== null && gone.has(loupe)) {
+              // Stay in the loupe on the next photo, like Hide does.
+              const next = flat.slice(loupeIndex + 1).find((i) => !gone.has(i.id)) ?? flat.slice(0, loupeIndex).reverse().find((i) => !gone.has(i.id));
+              setLoupe(next?.id ?? null);
+              if (next) setCursor(next.id);
+            } else if (cursor !== null && gone.has(cursor)) {
+              const at = indexOf(cursor);
+              const next = flat.slice(at + 1).find((i) => !gone.has(i.id)) ?? flat.slice(0, at).reverse().find((i) => !gone.has(i.id));
+              setCursor(next?.id ?? null);
+            }
             setSelected(new Set());
             say(`Binned ${n(r.photos)} photo${r.photos === 1 ? "" : "s"} (${n(r.files)} files, ${formatBytes(r.freed_bytes)})`);
             onChanged();
@@ -457,6 +469,8 @@ export default function Library({ groups: allGroups, query, onQuery: setQuery, s
           onEdit={(id) => { setLoupe(null); onEdit(id); }}
           onRate={(id, r) => rate([id], r)}
           onFlag={(id, f) => flag([id], f)}
+          onDelete={(id) => setDeleting([id])}
+          paused={confirming}
           onHide={(id) => {
             const next = flat[loupeIndex + 1] ?? flat[loupeIndex - 1];
             hide([id]);

@@ -55,7 +55,7 @@ export type ExportOptions = { folder: string; format: ExportFormat; quality: num
 export type ExportReport = { exported: number; files: string[]; errors: string[] };
 export type Preset = { id: number; name: string; edits: Edits };
 export type Rendered = { image: string; histogram: number[]; width: number; height: number };
-export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean; smart_tagging: boolean };
+export type Settings = { library_root: string | null; backup_root: string | null; auto_reference: boolean; smart_tagging: boolean; confirm_delete: boolean };
 export type ModelFile = { file: string; purpose: string; url: string; size_mb: number };
 export type SmartState = {
   models_ready: boolean; missing: ModelFile[]; download_mb: number; total: number; analysed: number; located: number;
@@ -107,7 +107,7 @@ export const api = {
   scan: (id: number) => invoke<ScanReport>("scan", { id }),
   processThumbnails: () => invoke<number>("process_thumbnails"),
   settings: () => invoke<Settings>("get_settings"),
-  setSetting: (key: "library_root" | "backup_root" | "auto_reference" | "auto_backup" | "smart_tagging", value: string) => invoke<void>("set_setting", { key, value }),
+  setSetting: (key: "library_root" | "backup_root" | "auto_reference" | "auto_backup" | "smart_tagging" | "confirm_delete", value: string) => invoke<void>("set_setting", { key, value }),
 
   dupGroups: () => invoke<DupGroup[]>("dup_groups"),
   dupResolve: (keep: number[], drop: number[]) => invoke<void>("dup_resolve", { keep, drop }),
