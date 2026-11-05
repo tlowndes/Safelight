@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, dateTimeLabel, fileExt, fileName, fileUrl, formatBytes, isViewable, Item, ItemSmart, n, thumbUrl } from "../api";
+import { api, dateTimeLabel, Details, fileExt, fileName, fileUrl, formatBytes, isViewable, Item, ItemSmart, Label, LABEL_NAMES, LABELS, n, PhotoDetails, thumbUrl } from "../api";
 import { isTyping } from "../shortcuts";
 
 type Props = {
@@ -10,6 +10,7 @@ type Props = {
   onEdit: (id: number) => void;
   onRate: (id: number, rating: number) => void;
   onFlag: (id: number, flag: number) => void;
+  onLabel: (id: number, label: Label | null) => void;
   onHide: (id: number) => void;
   onDelete: (id: number) => void;
   /** A dialog is open on top: leave the keys to it. */
@@ -31,7 +32,7 @@ type View = { s: number; x: number; y: number; fit: boolean };
 const MAX_ZOOM = 8;
 const DATE_FROM: Record<string, string> = { exif: "from camera data", takeout: "from Google Takeout", filename: "from the file name", mtime: "from the file's modified time" };
 
-export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onHide, onDelete, paused, sourceName, onSimilar, onSearch, onShowInFolder, onShowInExplorer }: Props) {
+export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, onFlag, onLabel, onHide, onDelete, paused, sourceName, onSimilar, onSearch, onShowInFolder, onShowInExplorer }: Props) {
   const item = items[index];
   const stage = useRef<HTMLDivElement>(null);
   const media = useRef<HTMLImageElement & HTMLVideoElement>(null);
@@ -45,6 +46,23 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
   const [dragging, setDragging] = useState(false);
   const wheel = useRef({ acc: 0, last: 0 });
   const [smart, setSmart] = useState<ItemSmart | null>(null);
+  const [details, setDetails] = useState<PhotoDetails | null>(null);
+  /** Caption and copyright as typed, saved when the box loses focus. */
+  const [draft, setDraft] = useState<Details>({ caption: "", copyright: "" });
+
+  useEffect(() => {
+    if (!item) return;
+    let live = true;
+    setDetails(null);
+    api.photoDetails(item.id).then((d) => { if (live) { setDetails(d); setDraft(d.details); } }).catch(() => {});
+    return () => { live = false; };
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveDetails = () => {
+    if (!item || !details) return;
+    if (draft.caption === details.details.caption && draft.copyright === details.details.copyright) return;
+    setDetails({ ...details, details: draft });
+    api.setDetails([item.id], draft).catch(() => {});
+  };
 
   useEffect(() => {
     if (!item) return;
@@ -174,6 +192,7 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
       else if (k === "i" || k === "I") setInfo((v) => !v);
       else if (k === "Tab") setChrome((v) => !v);
       else if (/^[0-5]$/.test(k)) onRate(item.id, Number(k));
+      else if (/^[6-9]$/.test(k)) { const l = LABELS[Number(k) - 6]; onLabel(item.id, item.label === l ? null : l); }
       else if (k === "p" || k === "P") onFlag(item.id, item.flag === 1 ? 0 : 1);
       else if (k === "x" || k === "X") onFlag(item.id, item.flag === -1 ? 0 : -1);
       else if (k === "u" || k === "U") onFlag(item.id, 0);
@@ -273,6 +292,12 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
               <button className={`reject ${item.flag === -1 ? "on" : ""}`} aria-pressed={item.flag === -1} onClick={() => onFlag(item.id, item.flag === -1 ? 0 : -1)}>Reject</button>
             </div>
           </div>
+          <div className="labels" role="group" aria-label="Colour label">
+            {LABELS.map((l, k) => (
+              <button key={l} className={item.label === l ? "on" : ""} aria-pressed={item.label === l} title={`${LABEL_NAMES[l]}${k < 4 ? ` (${k + 6})` : ""}`} aria-label={`${LABEL_NAMES[l]} label`}
+                onClick={() => onLabel(item.id, item.label === l ? null : l)}><i className={`label-dot ${l}`} /></button>
+            ))}
+          </div>
           <dl>
             <dt>File</dt><dd>{fileExt(item.path)}{item.width && item.height ? ` · ${item.width} × ${item.height}` : ""} · {formatBytes(item.size)}</dd>
             <dt>Source</dt><dd>{sourceName(item.source_id)}</dd>
@@ -288,6 +313,34 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
             </dd>
             <dt>Fingerprint</dt><dd className="mono-text" title={item.sha256}>{item.sha256.slice(0, 8)}…{item.sha256.slice(-8)}</dd>
           </dl>
+          {details && (details.camera.camera || details.camera.lens || details.camera.iso) && (
+            <div>
+              <div className="label">Camera</div>
+              <dl>
+                {details.camera.camera && <><dt>Camera</dt><dd>{details.camera.camera}</dd></>}
+                {details.camera.lens && <><dt>Lens</dt><dd>{details.camera.lens}</dd></>}
+                {(details.camera.aperture || details.camera.shutter || details.camera.iso) && (
+                  <><dt>Exposure</dt><dd>{[details.camera.aperture, details.camera.shutter, details.camera.iso && `ISO ${details.camera.iso}`].filter(Boolean).join(" · ")}</dd></>
+                )}
+                {details.camera.focal_length && <><dt>Focal length</dt><dd>{details.camera.focal_length}</dd></>}
+                {details.camera.flash && <><dt>Flash</dt><dd>{details.camera.flash}</dd></>}
+                {details.camera.software && <><dt>Software</dt><dd>{details.camera.software}</dd></>}
+              </dl>
+            </div>
+          )}
+          {details && (
+            <div className="meta-edit">
+              <label><span className="label">Caption</span>
+                <textarea className="text-input" rows={2} value={draft.caption} placeholder="Add a caption" onChange={(e) => setDraft({ ...draft, caption: e.target.value })} onBlur={saveDetails}
+                  onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }} />
+              </label>
+              <label><span className="label">Copyright</span>
+                <input className="text-input" value={draft.copyright} placeholder="© 2026 Your name" onChange={(e) => setDraft({ ...draft, copyright: e.target.value })} onBlur={saveDetails}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur(); }} />
+              </label>
+              {details.xmp && <span className="muted small">Has an XMP sidecar next to the file.</span>}
+            </div>
+          )}
           {smart && (smart.people.length > 0 || smart.faces > 0 || smart.place || smart.tags.length > 0 || onSimilar) && (
             <div className="smart-facts" aria-label="Found by smart tagging">
               {(smart.people.length > 0 || smart.faces > 0) && (

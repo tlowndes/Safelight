@@ -7,6 +7,7 @@ pub mod ai;
 pub mod backup;
 pub mod catalogue;
 pub mod cleanup;
+pub mod collections;
 pub mod dates;
 pub mod delete;
 pub mod develop;
@@ -15,8 +16,10 @@ pub mod export;
 pub mod exact;
 pub mod folders;
 pub mod hash;
+pub mod import;
 pub mod imaging;
 pub mod media;
+pub mod meta;
 pub mod ocr;
 pub mod organise;
 pub mod plan;
@@ -27,6 +30,7 @@ pub mod screenshots;
 pub mod secret;
 #[cfg(windows)]
 pub mod winshell;
+pub mod xmp;
 
 pub use catalogue::{Catalogue, Item, MonthGroup, Source, Stats};
 pub use scan::{scan_source, ScanProgress, ScanReport};

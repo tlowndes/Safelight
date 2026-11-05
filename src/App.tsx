@@ -8,6 +8,8 @@ import Organise from "./views/Organise";
 import Cleanup from "./views/Cleanup";
 import Reference from "./views/Reference";
 import Editor from "./views/Editor";
+import MapView from "./views/MapView";
+import Import from "./views/Import";
 import Hidden from "./views/Hidden";
 import People from "./views/People";
 import Screenshots from "./views/Screenshots";
@@ -19,6 +21,8 @@ import { isTyping } from "./shortcuts";
 
 export default function App() {
   const [view, setView] = useState<View>("library");
+  /** Photos picked elsewhere (the map) to show in the library. */
+  const [pinned, setPinned] = useState<{ title: string; ids: number[] } | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [groups, setGroups] = useState<MonthGroup[]>([]);
@@ -150,7 +154,9 @@ export default function App() {
       <main className="main">
         {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
         {toast && <div className="toast" onClick={() => { setToast(null); setView("reference"); }}>{toast} · <u>View</u> <button onClick={(e) => { e.stopPropagation(); setToast(null); }}>×</button></div>}
-        {view === "library" && <Library groups={groups} stats={stats} sources={sources} query={query} onQuery={setQuery} smartReady={!!smart?.models_ready} onAddSources={() => setView("sources")} onEdit={openEditor} onPatch={patchItems} onChanged={refresh} onError={setError} />}
+        {view === "library" && <Library groups={groups} stats={stats} sources={sources} query={query} onQuery={setQuery} smartReady={!!smart?.models_ready} onAddSources={() => setView("sources")} onEdit={openEditor} onPatch={patchItems} onChanged={refresh} onError={setError} pinned={pinned} onClearPinned={() => setPinned(null)} />}
+        {view === "map" && <MapView groups={groups} onShow={(title, ids) => { setPinned({ title, ids }); setView("library"); }} onOpenTagging={() => setView("people")} onError={setError} />}
+        {view === "import" && <Import onImported={scan} onError={setError} />}
         {view === "people" && <People status={smart} progress={smartProgress} onRun={runSmart} onStatus={refreshSmart} onSearch={searchLibrary} onError={setError} />}
         {filed && view !== "screenshots" && (
           <div className="toast" onClick={() => { setFiled(null); setView("screenshots"); }}>
