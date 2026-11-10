@@ -29,7 +29,7 @@ export type ImportPreview = { found: number; new: number; already: number; bytes
 export type ImportReport = { copied: number; skipped: number; bytes: number; errors: string[]; source_id: number | null };
 export type Spot = { x: number; y: number; r: number; sx: number; sy: number };
 export type Mask = {
-  kind: "linear" | "radial"; x1: number; y1: number; x2: number; y2: number; feather: number; invert: boolean;
+  kind: "linear" | "radial" | "sky" | "subject"; x1: number; y1: number; x2: number; y2: number; feather: number; invert: boolean;
   exposure: number; contrast: number; highlights: number; shadows: number; saturation: number; temperature: number;
 };
 export type MonthGroup = { month: string; items: Item[] };
@@ -222,6 +222,10 @@ export const api = {
 
   smartStatus: () => invoke<SmartState>("smart_status"),
   downloadModels: () => invoke<void>("download_models"),
+  subjectReady: () => invoke<boolean>("subject_ready"),
+  downloadSubjectModel: () => invoke<void>("download_subject_model"),
+  autoStraighten: (id: number, edits: Edits) => invoke<number | null>("auto_straighten", { id, edits }),
+  maskOverlay: (id: number, edits: Edits, kind: "sky" | "subject") => invoke<string | null>("mask_overlay", { id, edits, kind }),
   runSmart: () => invoke<number>("run_smart"),
   stopSmart: () => invoke<void>("stop_smart"),
   smartSearch: (query: string) => invoke<number[]>("smart_search", { query }),

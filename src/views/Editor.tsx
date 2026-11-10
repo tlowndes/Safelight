@@ -207,6 +207,47 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
     } catch (e) { onError(String(e)); }
   };
   const setSpot = (i: number, sp: Spot) => update({ spots: edits.spots.map((s, k) => (k === i ? sp : s)) }, "Move spot", `spot-${i}`);
+  const [finding, setFinding] = useState(false);
+  /** Level the photo from its horizon or upright lines. */
+  const autoStraighten = async () => {
+    if (itemId === null) return;
+    setFinding(true);
+    try {
+      const v = await api.autoStraighten(itemId, edits);
+      if (v === null) setStatus("Couldn't find a clear horizon or upright lines to level by. Use the slider instead.");
+      else { update({ straighten: v }, `Auto straighten ${v > 0 ? "+" : ""}${v.toFixed(1)}°`); setStatus(v === 0 ? "This photo is already level." : ""); }
+    } catch (e) { onError(String(e)); } finally { setFinding(false); }
+  };
+  /** Sky or subject: found from the picture, nothing to place by hand. */
+  const addSmartMask = async (kind: "sky" | "subject") => {
+    if (itemId === null) return;
+    try {
+      if (kind === "subject" && !(await api.subjectReady())) {
+        setFinding(true);
+        setStatus("Downloading the subject finder (5 MB, once). It runs on this PC.");
+        await api.downloadSubjectModel();
+        setStatus("");
+      }
+      const m: Mask = { kind, feather: 30, invert: false, exposure: 0, contrast: 0, highlights: 0, shadows: 0, saturation: 0, temperature: 0, x1: 0, y1: 0, x2: 0, y2: 0 };
+      const masks = [...edits.masks, m];
+      update({ masks }, kind === "sky" ? "Select sky" : "Select subject");
+      setTool("mask");
+      setTimeout(() => setPicked(masks.length - 1));
+    } catch (e) { setStatus(""); onError(String(e)); } finally { setFinding(false); }
+  };
+  // The selected sky or subject mask, tinted on the picture so you can see what it covers.
+  const [overlay, setOverlay] = useState<string | null>(null);
+  const pickedMask = tool === "mask" && picked !== null ? edits.masks[picked] : undefined;
+  const smartKind = pickedMask && (pickedMask.kind === "sky" || pickedMask.kind === "subject") ? pickedMask.kind : null;
+  const geoKey = JSON.stringify([edits.rotate, edits.straighten, edits.distortion, edits.fringing, edits.lens_vignette, edits.spots]);
+  useEffect(() => {
+    if (itemId === null || !smartKind) { setOverlay(null); return; }
+    let live = true;
+    api.maskOverlay(itemId, edits, smartKind).then((u) => live && setOverlay(u)).catch(() => live && setOverlay(null));
+    return () => { live = false; };
+  }, [itemId, smartKind, geoKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const maskName = (m: Mask) => ({ radial: "Radial", linear: "Linear", sky: "Sky", subject: "Subject" })[m.kind];
+
   const addMask = (kind: "radial" | "linear") => {
     const [cx, cy, cw, ch] = edits.crop ?? [0, 0, 1, 1];
     const m: Mask = {
@@ -361,6 +402,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
             ))}
           </div>
           {slider("Straighten", "straighten", -45, 45, 0.1, (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}°`)}
+          <button className="btn small" onClick={autoStraighten} disabled={finding} title="Level the horizon or upright lines">{finding ? "Looking…" : "Auto straighten"}</button>
           <div className="label">Spot removal</div>
           {tool === "heal" ? (
             <>
@@ -379,11 +421,13 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
           <div className="row wrap">
             <button className="btn small" onClick={() => addMask("radial")}>+ Radial</button>
             <button className="btn small" onClick={() => addMask("linear")}>+ Linear</button>
+            <button className="btn small" onClick={() => addSmartMask("sky")} disabled={finding}>+ Sky</button>
+            <button className="btn small" onClick={() => addSmartMask("subject")} disabled={finding}>+ Subject</button>
           </div>
           {edits.masks.map((m, i) => (
             <div key={i} className="preset-row">
               <button className={`preset ${tool === "mask" && picked === i ? "on" : ""}`} onClick={() => { setTool("mask"); setTimeout(() => setPicked(i)); }}>
-                {m.kind === "radial" ? "Radial" : "Linear"} {i + 1}{m.invert ? " · inverted" : ""}
+                {maskName(m)} {i + 1}{m.invert ? " · inverted" : ""}
               </button>
               <button className="x" title="Remove mask" onClick={() => { update({ masks: edits.masks.filter((_, k) => k !== i) }, "Remove mask"); setPicked(null); }}>×</button>
             </div>
@@ -417,7 +461,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
             {shown ? <img ref={imgRef} src={shown.image} alt="" onLoad={measure} /> : <p className="muted">Opening…</p>}
             {shown && box && tool !== "none" && !showBefore && (
               <EditOverlay box={box} crop={edits.crop ?? [0, 0, 1, 1]} tool={tool} spots={edits.spots} masks={edits.masks} selected={picked} brush={brush}
-                onSelect={setPicked} onAddSpot={addSpot} onSpot={(i, sp) => setSpot(i, sp)} onMask={(i, m) => setMask(i, m)} />
+                overlay={overlay} onSelect={setPicked} onAddSpot={addSpot} onSpot={(i, sp) => setSpot(i, sp)} onMask={(i, m) => setMask(i, m)} />
             )}
             {showBefore && <span className="before-tag">Before</span>}
           </div>
@@ -439,7 +483,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
             );
             return (
               <div className="mask-panel">
-                <div className="group-title">{m.kind === "radial" ? "Radial" : "Linear"} mask {picked + 1}
+                <div className="group-title">{maskName(m)} mask {picked + 1}
                   <button className="link" onClick={removePicked}>Remove</button>
                 </div>
                 {ms("Exposure", "exposure", -3, 3, 0.05)}
@@ -448,7 +492,7 @@ export default function Editor({ itemId, groups, onPick, onError, onChanged }: P
                 {ms("Shadows", "shadows", -100, 100)}
                 {ms("Saturation", "saturation", -100, 100)}
                 {ms("Temperature", "temperature", -100, 100)}
-                {m.kind === "radial" && ms("Feather", "feather", 0, 100)}
+                {m.kind !== "linear" && ms("Feather", "feather", 0, 100)}
                 <label className="ex-check"><input type="checkbox" checked={m.invert} onChange={(e) => setMask(picked, { ...m, invert: e.target.checked }, e.target.checked ? "Invert mask" : "Un-invert mask")} /> Invert (change everything outside)</label>
               </div>
             );

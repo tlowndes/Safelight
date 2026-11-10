@@ -25,6 +25,7 @@ pub mod organise;
 pub mod plan;
 pub mod reference;
 pub mod scan;
+pub mod segment;
 pub mod smart;
 pub mod screenshots;
 pub mod secret;

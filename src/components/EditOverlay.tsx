@@ -12,6 +12,8 @@ type Props = {
   masks: Mask[];
   selected: number | null;
   brush: number;
+  /** The selected sky or subject mask, as a greyscale picture over the uncropped frame. */
+  overlay?: string | null;
   onSelect: (i: number | null) => void;
   /** Heal: a click on the picture, in frame coordinates. */
   onAddSpot: (x: number, y: number) => void;
@@ -23,7 +25,7 @@ type Drag = { kind: "spot" | "source" | "c" | "p2" | "rx" | "ry"; index: number;
 
 /** Handles drawn on top of the editor preview for spot healing and masks. Everything is
  * stored in the uncropped frame (0..1 across and down), so it survives changing the crop. */
-export default function EditOverlay({ box, crop, tool, spots, masks, selected, brush, onSelect, onAddSpot, onSpot, onMask }: Props) {
+export default function EditOverlay({ box, crop, tool, spots, masks, selected, brush, overlay, onSelect, onAddSpot, onSpot, onMask }: Props) {
   const ref = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [cx, cy, cw, ch] = crop;
@@ -64,6 +66,16 @@ export default function EditOverlay({ box, crop, tool, spots, masks, selected, b
     <svg ref={ref} className={`edit-overlay ${tool}`} style={{ left: box.left, top: box.top, width: W, height: H }}
       onPointerDown={(e) => { if (tool === "heal") { const p = frame(e); onAddSpot(p.x, p.y); } else onSelect(null); }}
       onPointerMove={(e) => move(e)} onPointerUp={(e) => move(e, true)} onPointerCancel={() => setDrag(null)}>
+      {tool === "mask" && overlay && (
+        <>
+          <defs>
+            <mask id="smart-mask" maskUnits="userSpaceOnUse" x={0} y={0} width={W} height={H}>
+              <image href={overlay} x={(-cx / cw) * W} y={(-cy / ch) * H} width={W / cw} height={H / ch} preserveAspectRatio="none" />
+            </mask>
+          </defs>
+          <rect className="smart-tint" width={W} height={H} mask="url(#smart-mask)" />
+        </>
+      )}
       {tool === "heal" && spots.map((s, i) => {
         const r = (s.r / cw) * W;
         const on = selected === i;
@@ -78,6 +90,7 @@ export default function EditOverlay({ box, crop, tool, spots, masks, selected, b
       {tool === "heal" && <circle className="brush-hint" cx={W - 20 - (brush / cw) * W} cy={20 + (brush / cw) * W} r={(brush / cw) * W} />}
       {tool === "mask" && masks.map((m, i) => {
         const on = selected === i;
+        if (m.kind === "sky" || m.kind === "subject") return null;
         if (m.kind === "linear") {
           const [ax, ay, bx, by] = [px(m.x1), py(m.y1), px(m.x2), py(m.y2)];
           const len = Math.hypot(bx - ax, by - ay) || 1;
