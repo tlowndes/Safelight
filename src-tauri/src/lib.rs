@@ -508,6 +508,61 @@ async fn smart_status(state: State<'_, AppState>) -> CmdResult<SmartState> {
     }))
 }
 
+/// Whether the Select subject model is on this PC yet.
+#[tauri::command]
+fn subject_ready() -> bool {
+    safelight_core::segment::subject_ready()
+}
+
+#[tauri::command]
+async fn download_subject_model(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = state.smart.models_dir.clone();
+    blocking(move || models::download_subject(&app, &dir)).await
+}
+
+type PreviewCache = Arc<Mutex<Option<(i64, image::DynamicImage)>>>;
+
+/// Load the photo being edited into the preview cache, then run `f` on it.
+fn with_preview<T>(db: &std::path::Path, cache: &PreviewCache, id: i64, f: impl FnOnce(&image::DynamicImage) -> CmdResult<T>) -> CmdResult<T> {
+    let mut slot = cache.lock().map_err(err)?;
+    if slot.as_ref().map(|s| s.0) != Some(id) {
+        let cat = Catalogue::open(db).map_err(err)?;
+        let item = cat.item(id).map_err(err)?.ok_or("photo not found")?;
+        let img = imaging::preview_image(std::path::Path::new(&item.path), PREVIEW_EDGE).ok_or("Safelight can't open this file for editing yet")?;
+        *slot = Some((id, img));
+    }
+    f(&slot.as_ref().unwrap().1)
+}
+
+/// The Straighten angle that levels this photo, or None when there's no clear line to go by.
+#[tauri::command]
+async fn auto_straighten(state: State<'_, AppState>, id: i64, edits: Edits) -> CmdResult<Option<f32>> {
+    let (db, cache) = (state.db_path.clone(), state.preview.clone());
+    blocking(move || {
+        with_preview(&db, &cache, id, |img| {
+            // Measure the photo as turned, before any straightening.
+            let turned = develop::geometry(img, &Edits { rotate: edits.rotate, distortion: edits.distortion, ..Default::default() });
+            Ok(safelight_core::segment::auto_straighten(&image::DynamicImage::ImageRgb8(turned)))
+        })
+    })
+    .await
+}
+
+/// A sky or subject mask for the editor to tint, as a PNG data URL over the uncropped frame.
+#[tauri::command]
+async fn mask_overlay(state: State<'_, AppState>, id: i64, edits: Edits, kind: String) -> CmdResult<Option<String>> {
+    let (db, cache) = (state.db_path.clone(), state.preview.clone());
+    blocking(move || {
+        with_preview(&db, &cache, id, |img| {
+            let Some(map) = develop::mask_overlay(img, &edits, &kind) else { return Ok(None) };
+            let mut png = Vec::new();
+            image::DynamicImage::ImageLuma8(map).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).map_err(err)?;
+            Ok(Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))))
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn download_models(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let dir = state.smart.models_dir.clone();
@@ -1033,6 +1088,7 @@ pub fn run() {
             let backing_up = Arc::new(AtomicBool::new(false));
             start_backup_timer(app.handle().clone(), db_path.clone(), backing_up.clone());
             let models_dir = dir.join("models");
+            safelight_core::segment::set_models_dir(&models_dir);
             let faces_dir = app.path().app_cache_dir()?.join("faces");
             app.manage(AppState {
                 db_path,
@@ -1073,7 +1129,7 @@ pub fn run() {
             load_edits, save_edits, render_preview, export_image, export_items, paste_look, restore_edits,
             set_label, collections_list, collection_create, collection_update, collection_delete, collection_add, collection_remove, collection_items,
             photo_details, set_details, versions, new_version, switch_version, delete_version, rename_version, write_xmp, read_xmp, map_points,
-            import_preview, import_default_folder, import_run, web_gallery, render_for_print, spot_source, presets, save_preset, delete_preset,
+            import_preview, import_default_folder, import_run, web_gallery, render_for_print, spot_source, subject_ready, download_subject_model, auto_straighten, mask_overlay, presets, save_preset, delete_preset,
             set_rating, set_flag, set_hidden, hidden_items, view_image, view_video, import_captures,
             capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
             capture::reveal_in_folder, item_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,

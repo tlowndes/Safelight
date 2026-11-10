@@ -65,6 +65,7 @@ pub struct Spot {
 
 /// A local adjustment. "linear": full effect at (x1, y1) fading to none at (x2, y2).
 /// "radial": an ellipse centred on (x1, y1) with radii (x2, y2), feathered at the edge.
+/// "sky" and "subject": found from the picture (see `segment`); the points are unused.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Mask {
@@ -73,7 +74,7 @@ pub struct Mask {
     pub y1: f32,
     pub x2: f32,
     pub y2: f32,
-    /// 0..100, radial only.
+    /// 0..100: radial, sky and subject.
     pub feather: f32,
     pub invert: bool,
     /// Stops, -3..3.
@@ -406,7 +407,11 @@ pub fn find_spot_source(img: &RgbImage, x: f32, y: f32, r: f32) -> (f32, f32) {
 }
 
 /// How much a mask applies at a point (0..1), in the frame before cropping.
-fn mask_weight(m: &Mask, x: f32, y: f32, aspect: f32) -> f32 {
+fn mask_weight(m: &Mask, map: Option<&image::GrayImage>, x: f32, y: f32, aspect: f32) -> f32 {
+    if crate::segment::is_smart_kind(&m.kind) {
+        let w = map.map_or(0.0, |mp| crate::segment::sample_map(mp, x, y));
+        return if m.invert { 1.0 - w } else { w };
+    }
     let w = match m.kind.as_str() {
         "linear" => {
             let (dx, dy) = (m.x2 - m.x1, (m.y2 - m.y1) / aspect);
@@ -430,10 +435,11 @@ fn mask_weight(m: &Mask, x: f32, y: f32, aspect: f32) -> f32 {
 
 /// Local adjustments on the finished picture. `frame` maps the cropped picture back to the
 /// frame masks are placed in: [x, y, w, h] as in `Edits::crop`.
-fn apply_masks(img: &mut RgbImage, masks: &[Mask], frame: [f32; 4], full_aspect: f32) {
-    let active: Vec<&Mask> = masks
+fn apply_masks(img: &mut RgbImage, masks: &[Mask], maps: &[Option<image::GrayImage>], frame: [f32; 4], full_aspect: f32) {
+    let active: Vec<(&Mask, Option<&image::GrayImage>)> = masks
         .iter()
-        .filter(|m| [m.exposure, m.contrast, m.highlights, m.shadows, m.saturation, m.temperature].iter().any(|v| *v != 0.0))
+        .zip(maps.iter().map(|m| m.as_ref()).chain(std::iter::repeat(None)))
+        .filter(|(m, _)| [m.exposure, m.contrast, m.highlights, m.shadows, m.saturation, m.temperature].iter().any(|v| *v != 0.0))
         .collect();
     if active.is_empty() {
         return;
@@ -443,8 +449,8 @@ fn apply_masks(img: &mut RgbImage, masks: &[Mask], frame: [f32; 4], full_aspect:
         let fx = frame[0] + (x as f32 + 0.5) / w * frame[2];
         let fy = frame[1] + (y as f32 + 0.5) / h * frame[3];
         let mut c = [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0];
-        for m in &active {
-            let a = mask_weight(m, fx, fy, full_aspect);
+        for (m, map) in &active {
+            let a = mask_weight(m, *map, fx, fy, full_aspect);
             if a <= 1e-3 {
                 continue;
             }
@@ -474,6 +480,29 @@ fn apply_masks(img: &mut RgbImage, masks: &[Mask], frame: [f32; 4], full_aspect:
     }
 }
 
+/// Sky and subject masks for this picture (in the frame before cropping), one per mask.
+fn smart_maps(img: &RgbImage, masks: &[Mask]) -> Vec<Option<image::GrayImage>> {
+    masks
+        .iter()
+        .map(|m| {
+            let busy = [m.exposure, m.contrast, m.highlights, m.shadows, m.saturation, m.temperature].iter().any(|v| *v != 0.0);
+            if !busy || !crate::segment::is_smart_kind(&m.kind) {
+                return None;
+            }
+            crate::segment::smart_map(&m.kind, img).map(|mp| crate::segment::feathered(&mp, m.feather))
+        })
+        .collect()
+}
+
+/// A sky or subject mask as the editor shows it: 0..255 over the frame before cropping.
+pub fn mask_overlay(img: &DynamicImage, e: &Edits, kind: &str) -> Option<image::GrayImage> {
+    let mut base = geometry(img, e);
+    if !e.spots.is_empty() {
+        heal(&mut base, &e.spots);
+    }
+    crate::segment::smart_map(kind, &base)
+}
+
 /// Turn, heal, crop, then run the colour pipeline and local adjustments.
 pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
     let mut base = geometry(img, e);
@@ -481,6 +510,7 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
         heal(&mut base, &e.spots);
     }
     let full_aspect = base.width() as f32 / base.height().max(1) as f32;
+    let maps = smart_maps(&base, &e.masks);
     let mut frame = [0.0, 0.0, 1.0, 1.0];
     if let Some([x, y, w, h]) = e.crop {
         let (iw, ih) = (base.width() as f32, base.height() as f32);
@@ -493,7 +523,7 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
     }
     let geometry_only = Edits { crop: None, rotate: 0, straighten: 0.0, distortion: 0.0, fringing: 0.0, lens_vignette: 0.0, spots: vec![], masks: vec![], ..e.clone() };
     if is_default(&geometry_only) {
-        apply_masks(&mut base, &e.masks, frame, full_aspect);
+        apply_masks(&mut base, &e.masks, &maps, frame, full_aspect);
         return base;
     }
 
@@ -560,7 +590,7 @@ pub fn apply(img: &DynamicImage, e: &Edits) -> RgbImage {
         }
     }
     spatial(&mut base, e);
-    apply_masks(&mut base, &e.masks, frame, full_aspect);
+    apply_masks(&mut base, &e.masks, &maps, frame, full_aspect);
     base
 }
 

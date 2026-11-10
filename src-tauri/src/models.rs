@@ -17,11 +17,23 @@ struct Progress {
 }
 
 /// Only these hosts are trusted for model files.
-const HOSTS: &[&str] = &["https://huggingface.co/", "https://github.com/opencv/opencv_zoo/"];
+const HOSTS: &[&str] = &["https://huggingface.co/", "https://github.com/opencv/opencv_zoo/", "https://github.com/danielgatis/rembg/releases/"];
 
 pub fn download(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    download_files(app, dir, missing_models(dir))
+}
+
+/// The subject model for Select subject masks, if it isn't here yet.
+pub fn download_subject(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    let m = safelight_core::segment::SUBJECT_MODEL;
+    if dir.join(m.file).is_file() {
+        return Ok(());
+    }
+    download_files(app, dir, vec![m])
+}
+
+fn download_files(app: &AppHandle, dir: &Path, todo: Vec<ModelFile>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let todo: Vec<ModelFile> = missing_models(dir);
     let total: u64 = todo.iter().map(|m| m.size_mb as u64 * 1_000_000).sum();
     let agent = ureq::AgentBuilder::new().timeout_connect(std::time::Duration::from_secs(15)).redirects(8).build();
     let mut done_before = 0u64;
