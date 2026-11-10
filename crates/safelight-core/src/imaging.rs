@@ -1,6 +1,6 @@
 //! Decoding, thumbnails and visual fingerprints.
 
-use crate::{catalogue::Catalogue, Result};
+use crate::{catalogue::Catalogue, media, Result};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageDecoder, ImageReader};
 use rusqlite::params;
 use serde::Serialize;
@@ -9,8 +9,12 @@ use std::path::{Path, PathBuf};
 pub const THUMB_SIZE: u32 = 480;
 
 /// Decode a full image with the `image` crate, applying the camera's rotation flag.
-/// Covers JPEG, PNG, WebP, GIF, TIFF and BMP.
+/// Covers JPEG, PNG, WebP, GIF, TIFF and BMP. RAW files are left to `preview_image`: most are
+/// TIFF underneath, and the TIFF decoder would otherwise hand back a tiny thumbnail or noise.
 pub fn decode(path: &Path) -> Option<DynamicImage> {
+    if crate::raw::is_raw(path) || media::classify(path) == Some(media::Kind::Video) {
+        return None;
+    }
     let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
     let mut decoder = reader.into_decoder().ok()?;
     let orientation = decoder.orientation().ok();
@@ -22,12 +26,17 @@ pub fn decode(path: &Path) -> Option<DynamicImage> {
 }
 
 /// Best available picture of a file at roughly `max` pixels on its long edge.
-/// Falls back to the Windows shell for HEIC, RAW and video.
+/// RAW uses the camera's embedded JPEG, video a frame from Windows or ffmpeg, and HEIC the
+/// Windows shell (with the HEIF extension).
 pub fn preview_image(path: &Path, max: u32) -> Option<DynamicImage> {
-    if let Some(img) = decode(path) {
-        return Some(if img.width().max(img.height()) > max { img.resize(max, max, FilterType::Triangle) } else { img });
+    let fit = |img: DynamicImage| if img.width().max(img.height()) > max { img.resize(max, max, FilterType::Triangle) } else { img };
+    if crate::raw::is_raw(path) {
+        return crate::raw::embedded_preview(path).map(fit).or_else(|| shell_preview(path, max));
     }
-    shell_preview(path, max)
+    if media::classify(path) == Some(media::Kind::Video) {
+        return shell_preview(path, max).or_else(|| crate::video::frame(path, max));
+    }
+    decode(path).map(fit).or_else(|| shell_preview(path, max))
 }
 
 #[cfg(windows)]
@@ -87,14 +96,13 @@ pub fn process_thumbnails(cat: &Catalogue, cache_dir: &Path, mut progress: impl 
         let dims = full.as_ref().map(|i| i.dimensions());
         let thumb = match full {
             Some(img) => Some(img.thumbnail(THUMB_SIZE, THUMB_SIZE)),
-            None => shell_preview(path, THUMB_SIZE),
+            None => preview_image(path, THUMB_SIZE),
         };
         match thumb {
             Some(t) => {
                 let ph = dhash(&t) as i64;
-                if !out.exists() {
-                    t.to_rgb8().save_with_format(&out, image::ImageFormat::Jpeg).ok();
-                }
+                // Always (re)write: an older run may have saved a placeholder for this file.
+                t.to_rgb8().save_with_format(&out, image::ImageFormat::Jpeg).ok();
                 let thumb_path = out.exists().then(|| out.to_string_lossy().to_string());
                 cat.conn.execute(
                     "UPDATE items SET thumb = ?2, phash = ?3, thumb_tried = 1,

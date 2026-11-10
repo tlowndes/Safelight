@@ -15,6 +15,7 @@ pub fn shell_thumbnail(path: &Path, size: i32) -> Option<image::RgbaImage> {
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT,
+        SIIGBF_THUMBNAILONLY,
     };
 
     unsafe {
@@ -22,8 +23,10 @@ pub fn shell_thumbnail(path: &Path, size: i32) -> Option<image::RgbaImage> {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let wide = HSTRING::from(path.as_os_str());
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&wide, None).ok()?;
+        // THUMBNAILONLY: without it, files Windows has no codec for (CR2 without the Raw Image
+        // Extension, HEVC .mov without the HEVC extension) come back as the generic file icon.
         let hbmp = factory
-            .GetImage(SIZE { cx: size, cy: size }, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK)
+            .GetImage(SIZE { cx: size, cy: size }, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK | SIIGBF_THUMBNAILONLY)
             .ok()?;
 
         let mut bmp = BITMAP::default();
