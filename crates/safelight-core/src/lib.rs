@@ -23,9 +23,11 @@ pub mod meta;
 pub mod ocr;
 pub mod organise;
 pub mod plan;
+pub mod raw;
 pub mod reference;
 pub mod scan;
 pub mod smart;
+pub mod video;
 pub mod screenshots;
 pub mod secret;
 #[cfg(windows)]
