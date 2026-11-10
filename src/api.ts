@@ -219,6 +219,8 @@ export const api = {
   setHidden: (ids: number[], hidden: boolean) => invoke<void>("set_hidden", { ids, hidden }),
   hiddenItems: () => invoke<Item[]>("hidden_items"),
   viewImage: (id: number) => invoke<string>("view_image", { id }),
+  /** A playable MP4 copy of a video the webview can't play (HEVC .mov and similar). */
+  viewVideo: (id: number) => invoke<string>("view_video", { id }),
 
   smartStatus: () => invoke<SmartState>("smart_status"),
   downloadModels: () => invoke<void>("download_models"),

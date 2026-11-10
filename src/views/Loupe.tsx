@@ -40,6 +40,10 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
   const [view, setView] = useState<View>({ s: 1, x: 0, y: 0, fit: true });
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  /** Why a video couldn't be shown, or "converting" while a playable copy is being made. */
+  const [videoNote, setVideoNote] = useState<string | null>(null);
+  const shownId = useRef<number | null>(null);
+  shownId.current = item?.id ?? null;
   const [info, setInfo] = useState(true);
   const [chrome, setChrome] = useState(true);
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
@@ -78,6 +82,7 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
     if (!item) return;
     setNatural(null);
     setFailed(false);
+    setVideoNote(null);
     setView((v) => ({ ...v, fit: true }));
     if (item.kind === "video" || isViewable(item)) {
       setSrc(fileUrl(item.path));
@@ -225,6 +230,16 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
     toggleZoom(e.clientX - r.left, e.clientY - r.top);
   };
 
+  // The webview can't play HEVC .mov and some other formats; make an MP4 copy once and play that.
+  const onVideoError = () => {
+    if (!item || videoNote) { setFailed(true); return; }
+    const id = item.id;
+    setVideoNote("converting");
+    api.viewVideo(id)
+      .then((p) => { if (shownId.current === id) { setVideoNote("done"); setSrc(fileUrl(p)); } })
+      .catch((e) => { if (shownId.current === id) { setVideoNote(String(e)); setFailed(true); } });
+  };
+
   const shown = view.fit ? fitView() : view;
   const style = natural ? { width: natural.w, height: natural.h, transform: `translate(${shown.x}px, ${shown.y}px) scale(${shown.s})` } : { opacity: 0 };
   const pct = natural ? Math.round(shown.s * 100) : null;
@@ -240,12 +255,13 @@ export default function Loupe({ items, index, onIndex, onClose, onEdit, onRate, 
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={onDouble}>
         {item.kind === "video" && src ? (
           <video key={item.id} ref={media} className="pic" src={src} controls autoPlay style={style}
-            onLoadedMetadata={(e) => onLoaded(e.currentTarget.videoWidth, e.currentTarget.videoHeight)} onError={() => setFailed(true)} />
+            onLoadedMetadata={(e) => onLoaded(e.currentTarget.videoWidth, e.currentTarget.videoHeight)} onError={onVideoError} />
         ) : src && !failed ? (
           <img key={src} ref={media} className="pic" src={src} alt={fileName(item.path)} draggable={false} style={style}
             onLoad={(e) => onLoaded(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} onError={() => setFailed(true)} />
         ) : null}
-        {(failed || !src) && <div className="msg">{failed ? `Safelight can't show this ${fileExt(item.path)} file yet.` : "Loading…"}</div>}
+        {videoNote === "converting" ? <div className="msg">Preparing this video to play…</div>
+          : (failed || !src) && <div className="msg">{failed ? (videoNote && videoNote !== "done" ? videoNote : `Safelight can't show this ${fileExt(item.path)} file yet.`) : "Loading…"}</div>}
       </div>
 
       <div className="lbar">

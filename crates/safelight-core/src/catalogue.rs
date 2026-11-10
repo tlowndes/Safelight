@@ -252,7 +252,24 @@ impl Catalogue {
             }
         }
         conn.execute_batch("CREATE INDEX IF NOT EXISTS items_phash ON items(phash)")?;
-        Ok(Self { conn })
+        let cat = Self { conn };
+        cat.retry_thumbnails()?;
+        Ok(cat)
+    }
+
+    /// Once per thumbnailer upgrade, give RAW files, videos and anything that never got a
+    /// thumbnail another go (RAW and video previews no longer depend on Windows codecs).
+    fn retry_thumbnails(&self) -> Result<()> {
+        const VERSION: &str = "2";
+        if self.setting("thumb_version")?.as_deref() == Some(VERSION) {
+            return Ok(());
+        }
+        let raw = crate::raw::RAW.iter().map(|e| format!("lower(path) LIKE '%.{e}'")).collect::<Vec<_>>().join(" OR ");
+        self.conn.execute(
+            &format!("UPDATE items SET thumb_tried = 0 WHERE thumb IS NULL OR kind = 'video' OR {raw}"),
+            [],
+        )?;
+        self.set_setting("thumb_version", VERSION)
     }
 
     pub fn connection(&self) -> &Connection {

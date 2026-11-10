@@ -1008,6 +1008,24 @@ async fn view_image(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     .await
 }
 
+/// A playable MP4 of a video the webview can't play itself (HEVC .mov, AVI, MKV...), made once
+/// with ffmpeg and cached beside the thumbnails. Returns its path. The original is only read.
+#[tauri::command]
+async fn view_video(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    let db = state.db_path.clone();
+    let dir = state.cache_dir.join("video");
+    blocking(move || {
+        let cat = Catalogue::open(&db).map_err(err)?;
+        let item = cat.item(id).map_err(err)?.ok_or("video not found")?;
+        let out = dir.join(format!("{}.mp4", &item.sha256[..32.min(item.sha256.len())]));
+        if !out.exists() {
+            safelight_core::video::playable_copy(std::path::Path::new(&item.path), &out)?;
+        }
+        Ok(out.to_string_lossy().into_owned())
+    })
+    .await
+}
+
 // ---------- capture ----------
 
 /// Scans the Captures folder so new screenshots, recordings and exports show up in the library.
@@ -1112,7 +1130,7 @@ pub fn run() {
             set_label, collections_list, collection_create, collection_update, collection_delete, collection_add, collection_remove, collection_items,
             photo_details, set_details, versions, new_version, switch_version, delete_version, rename_version, write_xmp, read_xmp, map_points,
             import_preview, import_default_folder, import_run, web_gallery, render_for_print, spot_source, subject_ready, download_subject_model, auto_straighten, mask_overlay, presets, save_preset, delete_preset,
-            set_rating, set_flag, set_hidden, hidden_items, view_image, import_captures,
+            set_rating, set_flag, set_hidden, hidden_items, view_image, view_video, import_captures,
             capture::capture_config, capture::set_close_to_tray, capture::copy_image, capture::copy_text,
             capture::reveal_in_folder, item_folder, capture::open_mic_settings, capture::open_capture_folder, capture::show_main_window,
             capture::db::capture_db_execute, capture::db::capture_db_select,
