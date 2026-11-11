@@ -110,7 +110,7 @@ export default function Compare({ items, mode, onMode, onRate, onFlag, onLabel, 
 
   const cols = mode === "compare" ? 2 : Math.ceil(Math.sqrt(live.length * 1.6));
   return (
-    <div className="compare" role="dialog" aria-label={mode === "compare" ? "Compare" : "Survey"}>
+    <div className="cmp-view" role="dialog" aria-label={mode === "compare" ? "Compare" : "Survey"}>
       <div className="cmp-top">
         <div className="seg" role="group" aria-label="Mode">
           <button className={mode === "compare" ? "on" : ""} onClick={() => onMode("compare")}>Compare · C</button>
