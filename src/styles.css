@@ -556,7 +556,7 @@ kbd { min-width: 24px; height: 24px; padding: 0 7px; display: inline-flex; align
 .ph .stack-count ~ .meta .stars { margin-right: 30px; }
 
 /* ---------- Compare and survey ---------- */
-.compare { position: fixed; inset: 0; z-index: 30; background: var(--stage); display: flex; flex-direction: column; }
+.cmp-view { position: fixed; inset: 0; z-index: 30; background: var(--stage); display: flex; flex-direction: column; }
 .cmp-top { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .cmp-top .seg button { width: auto; padding: 0 12px; font-size: 12.5px; }
 .cmp-top .btn { margin-left: auto; }
