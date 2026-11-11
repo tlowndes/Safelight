@@ -12,8 +12,13 @@ type Plan = Arc<TypedRunnableModel>;
 const DET_SIDE: usize = 640;
 const MIN_SCORE: f32 = 0.8;
 const NMS_IOU: f32 = 0.3;
-/// Faces smaller than this (pixels, on the detector's 640 canvas) are too blurry to recognise.
-const MIN_FACE: f32 = 18.0;
+/// Faces smaller than this (pixels, on the detector's 640 canvas) are too small to recognise.
+const MIN_FACE: f32 = 22.0;
+/// Side of the face crop kept for the People screen; sharpness is measured on it too.
+pub const CROP_SIDE: u32 = 160;
+/// Faces whose crop scores below this on [`sharpness`] are too blurred to tell who it is,
+/// so they're left out of People (they only split one person into lots of look-alike groups).
+pub const MIN_SHARPNESS: f32 = 50.0;
 /// Cosine above which two face signatures are the same person (SFace's published threshold is 0.363;
 /// a little stricter keeps different people apart).
 pub const SAME_PERSON: f32 = 0.42;
@@ -182,6 +187,27 @@ pub fn crop(img: &DynamicImage, face: &Face, size: u32) -> DynamicImage {
     img.crop_imm(x, y, s, s).resize_exact(size, size, FilterType::CatmullRom)
 }
 
+/// How sharp a face crop is: the spread of the edge filter (variance of the Laplacian) over the
+/// middle of the crop, where the face is. Crisp faces score in the hundreds; out of focus, shaken
+/// or tiny blown-up faces score in single or low double figures.
+pub fn sharpness(crop: &DynamicImage) -> f32 {
+    let g = crop.resize_exact(CROP_SIDE, CROP_SIDE, FilterType::Triangle).to_luma8();
+    // The crop is 1.6× the face, so the face sits in roughly the middle 60%.
+    let (lo, hi) = (CROP_SIDE * 2 / 10, CROP_SIDE * 8 / 10);
+    let px = |x: u32, y: u32| g.get_pixel(x, y)[0] as f32;
+    let (mut sum, mut sq, mut n) = (0.0f64, 0.0f64, 0.0f64);
+    for y in lo..hi {
+        for x in lo..hi {
+            let l = (px(x - 1, y) + px(x + 1, y) + px(x, y - 1) + px(x, y + 1) - 4.0 * px(x, y)) as f64;
+            sum += l;
+            sq += l * l;
+            n += 1.0;
+        }
+    }
+    let mean = sum / n;
+    (sq / n - mean * mean) as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +243,15 @@ mod tests {
         let (same, diff) = (super::super::dot(&sa, &sa2), super::super::dot(&sa, &sb));
         eprintln!("same person {same}, different people {diff}");
         assert!(same > SAME_PERSON && diff < SAME_PERSON, "same {same}, diff {diff}");
+
+        // Sharp faces pass the blur check; the same face out of focus doesn't.
+        for (name, img, face) in [("a", &a, &fa[0]), ("b", &b, &fb[0])] {
+            let sharp = sharpness(&crop(img, face, CROP_SIDE));
+            let sigma = face.w.max(face.h) / 40.0;
+            let soft = sharpness(&crop(&img.blur(sigma), face, CROP_SIDE));
+            let softer = sharpness(&crop(&img.blur(sigma * 2.0), face, CROP_SIDE));
+            eprintln!("face {name} ({:.0}px): sharp {sharp:.1}, blurred {soft:.1}, very blurred {softer:.1}", face.w);
+            assert!(sharp >= MIN_SHARPNESS && soft < MIN_SHARPNESS, "face {name}: sharp {sharp}, blurred {soft}");
+        }
     }
 }

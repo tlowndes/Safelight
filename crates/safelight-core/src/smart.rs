@@ -50,11 +50,21 @@ CREATE TABLE IF NOT EXISTS faces (
   signature BLOB NOT NULL,
   person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
   rejected_person INTEGER,
-  crop TEXT
+  crop TEXT,
+  sharpness REAL
 );
 CREATE INDEX IF NOT EXISTS faces_sha ON faces(sha256);
 CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id);
 "#;
+
+/// Columns added to `faces` after the first release.
+pub(crate) fn migrate(conn: &rusqlite::Connection) -> Result<()> {
+    let has: bool = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('faces') WHERE name = 'sharpness'", [], |r| r.get::<_, i64>(0))? > 0;
+    if !has {
+        conn.execute_batch("ALTER TABLE faces ADD COLUMN sharpness REAL")?;
+    }
+    Ok(())
+}
 
 // ---------- status ----------
 
@@ -225,7 +235,14 @@ pub fn analyse(cat: &Catalogue, eng: &Engines, faces_dir: &Path, stop: &AtomicBo
                 .query_map([&sha], |r| Ok(faces::Face { x: r.get(0)?, y: r.get(1)?, w: r.get(2)?, h: r.get(3)?, score: 0.0, points: [(0.0, 0.0); 5] }))?
                 .collect::<std::result::Result<_, _>>()?;
             let found = eng.faces.detect(img)?;
-            for face in found.into_iter().filter(|f| kept.iter().all(|k| faces::iou(k, f) < 0.5)).take(MAX_FACES) {
+            let sharp_faces = found.into_iter().filter(|f| kept.iter().all(|k| faces::iou(k, f) < 0.5)).filter_map(|f| {
+                // Blurred faces can't be told apart reliably, so they'd only scatter one person
+                // across lots of look-alike groups. Leave them out.
+                let crop = faces::crop(img, &f, faces::CROP_SIDE);
+                let sharpness = faces::sharpness(&crop);
+                (sharpness >= faces::MIN_SHARPNESS).then_some((f, crop, sharpness))
+            });
+            for (face, crop, sharpness) in sharp_faces.take(MAX_FACES) {
                 let sig = eng.faces.signature(img, &face)?;
                 let person = match best_match(&samples, &sig) {
                     Some((p, _)) => p,
@@ -235,12 +252,12 @@ pub fn analyse(cat: &Catalogue, eng: &Engines, faces_dir: &Path, stop: &AtomicBo
                     }
                 };
                 tx.execute(
-                    "INSERT INTO faces(sha256, x, y, w, h, score, signature, person_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![sha, face.x, face.y, face.w, face.h, face.score, ai::to_blob(&sig), person],
+                    "INSERT INTO faces(sha256, x, y, w, h, score, signature, person_id, sharpness) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![sha, face.x, face.y, face.w, face.h, face.score, ai::to_blob(&sig), person, sharpness],
                 )?;
                 let id = tx.last_insert_rowid();
                 let out = faces_dir.join(format!("{id}.jpg"));
-                if faces::crop(img, &face, 160).to_rgb8().save_with_format(&out, image::ImageFormat::Jpeg).is_ok() {
+                if crop.to_rgb8().save_with_format(&out, image::ImageFormat::Jpeg).is_ok() {
                     tx.execute("UPDATE faces SET crop = ?2 WHERE id = ?1", params![id, out.to_string_lossy()])?;
                 }
                 samples.push((person, sig));
@@ -258,6 +275,39 @@ pub fn analyse(cat: &Catalogue, eng: &Engines, faces_dir: &Path, stop: &AtomicBo
     // People with no faces left (after re-analysis) and no name aren't worth keeping.
     cat.conn.execute("DELETE FROM people WHERE name IS NULL AND id NOT IN (SELECT person_id FROM faces WHERE person_id IS NOT NULL)", [])?;
     Ok(done)
+}
+
+/// Take blurred faces found before the blur check out of People. Faces you've named someone in
+/// or corrected are kept. Only faces never checked are looked at, so after the first run this
+/// is instant. Returns how many faces were removed.
+pub fn drop_blurry_faces(cat: &Catalogue) -> Result<u64> {
+    let unchecked: Vec<(i64, String)> = cat
+        .conn
+        .prepare("SELECT id, crop FROM faces WHERE sharpness IS NULL AND crop IS NOT NULL")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    if unchecked.is_empty() {
+        return Ok(0);
+    }
+    let tx = cat.conn.unchecked_transaction()?;
+    for (id, crop) in &unchecked {
+        // A crop that's gone or unreadable can't be judged; count it as sharp so it isn't retried.
+        let sharpness = image::open(crop).map(|c| faces::sharpness(&c)).unwrap_or(f32::MAX);
+        tx.execute("UPDATE faces SET sharpness = ?2 WHERE id = ?1", params![id, sharpness])?;
+    }
+    let blurry_sql = "FROM faces WHERE sharpness < ?1 AND rejected_person IS NULL
+         AND (person_id IS NULL OR person_id NOT IN (SELECT id FROM people WHERE name IS NOT NULL))";
+    let gone: Vec<Option<String>> = tx
+        .prepare(&format!("SELECT crop {blurry_sql}"))?
+        .query_map([faces::MIN_SHARPNESS], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    tx.execute(&format!("DELETE {blurry_sql}"), [faces::MIN_SHARPNESS])?;
+    tx.execute("DELETE FROM people WHERE name IS NULL AND id NOT IN (SELECT person_id FROM faces WHERE person_id IS NOT NULL)", [])?;
+    tx.commit()?;
+    for crop in gone.iter().flatten() {
+        let _ = std::fs::remove_file(crop);
+    }
+    Ok(gone.len() as u64)
 }
 
 // ---------- picture vectors: search and find-similar ----------
@@ -640,6 +690,41 @@ mod tests {
             )
             .unwrap();
         cat.conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn blurred_faces_leave_people_but_named_ones_stay() {
+        let cat = cat_with_items(3);
+        let tmp = tempfile::tempdir().unwrap();
+        let sharp = tmp.path().join("sharp.jpg");
+        let soft = tmp.path().join("soft.jpg");
+        // Fine checkerboard = lots of detail; flat grey = none.
+        image::RgbImage::from_fn(160, 160, |x, y| if (x / 2 + y / 2) % 2 == 0 { image::Rgb([230; 3]) } else { image::Rgb([20; 3]) }).save(&sharp).unwrap();
+        image::RgbImage::from_pixel(160, 160, image::Rgb([128; 3])).save(&soft).unwrap();
+        let set_crop = |id: i64, p: &Path| cat.conn.execute("UPDATE faces SET crop = ?2 WHERE id = ?1", params![id, p.to_string_lossy()]).unwrap();
+        let a = add_face(&cat, "sha0", 1);
+        set_crop(a, &sharp);
+        let b = add_face(&cat, "sha1", 1);
+        set_crop(b, &soft);
+        let c = add_face(&cat, "sha2", 2);
+        let soft2 = tmp.path().join("soft2.jpg");
+        std::fs::copy(&soft, &soft2).unwrap();
+        set_crop(c, &soft2);
+        let d = add_face(&cat, "sha2", 3);
+        let soft3 = tmp.path().join("soft3.jpg");
+        std::fs::copy(&soft, &soft3).unwrap();
+        set_crop(d, &soft3);
+        cat.conn.execute("UPDATE people SET name = 'Gran' WHERE id = 3", []).unwrap();
+
+        assert_eq!(drop_blurry_faces(&cat).unwrap(), 2);
+        let left: Vec<i64> = cat.conn.prepare("SELECT id FROM faces ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(left, vec![a, d]);
+        // The person who only had a blurred face is gone; the named one stays.
+        let people: Vec<i64> = cat.conn.prepare("SELECT id FROM people ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(people, vec![1, 3]);
+        assert!(!soft2.exists() && sharp.exists() && soft3.exists());
+        // Already checked, so a second run does nothing.
+        assert_eq!(drop_blurry_faces(&cat).unwrap(), 0);
     }
 
     #[test]

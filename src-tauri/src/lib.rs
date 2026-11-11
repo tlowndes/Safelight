@@ -580,6 +580,7 @@ async fn run_smart(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResu
     let (faces_dir, stop, running) = (state.faces_dir.clone(), state.smart_stop.clone(), state.smart_running.clone());
     let result = with_smart!(state, |cat, sm| {
         smart::tag_places(&cat).map_err(err)?;
+        smart::drop_blurry_faces(&cat).map_err(err)?;
         let Some(eng) = sm.engines()? else { return Ok(0) };
         let n = smart::analyse(&cat, &eng, &faces_dir, &stop, |p| {
             let _ = app.emit("smart-progress", p);

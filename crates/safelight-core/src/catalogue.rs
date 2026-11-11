@@ -241,6 +241,7 @@ impl Catalogue {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(crate::smart::SCHEMA)?;
+        crate::smart::migrate(&conn)?;
         conn.execute_batch(crate::screenshots::SCHEMA)?;
         let existing: Vec<String> = conn
             .prepare("SELECT name FROM pragma_table_info('items')")?
